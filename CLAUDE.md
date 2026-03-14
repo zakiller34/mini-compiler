@@ -1,11 +1,15 @@
 # mini-compiler
 
-C++ compiler (Flex/Bison) -> x86-64. Lean 4 proofs. Siek 2023.
+C++ compiler -> x86-64. Lean 4 proofs. Siek 2023.
 
 ## Build
 cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build
-./build/mc input.mc -o output.s
-gcc -o output output.s runtime/runtime.o -lm
+./build/src/mc input.mc -o output.s
+gcc -o output output.s build/src/libmc_runtime.a -lm
+
+## Run
+./build/src/mc input.mc -o output.s      # compile
+echo "42" | ./build/src/mc -i input.mc   # interpret
 
 ## Test
 cd build && ctest --output-on-failure
@@ -22,14 +26,21 @@ Local deps: mathlib4 + cslib from `../../lean-proofs/` (no network fetch).
 Create `.changeset/NNN_theme.md` per phase commit or big change. evalite-style frontmatter:
 `"mini-compiler": patch|minor|major` + user-facing description.
 
+## Pipeline
+```
+Source (.mc) -> [Lexer] -> [Parser] -> AST
+  -> [Uniquify] -> [RCO] -> [Explicate Control] -> C_Var IR
+  -> [Select Instructions] -> [Assign Homes] -> [Patch Instructions]
+  -> [Prelude/Conclusion] -> [Emit] -> x86-64 AT&T assembly (.s)
+```
+
 ## Structure
 ```
-src/              lexer.l, parser.y, ast.h/.cpp, type_checker, interpreter
+src/              lexer.h/.cpp, parser.h/.cpp, ast.h/.cpp, interpreter.h/.cpp
 src/passes/       one .h/.cpp per pass (uniquify, rco, explicate_control, ...)
 src/ir/           c_ir.h (basic blocks), x86_ir.h (pseudo-x86)
-runtime/          runtime.c (read_int, print_int, GC)
+runtime/          runtime.c (read_int, print_int)
 tests/unit/       Google Test per-pass: test_{pass}.cpp
-tests/z3/         Z3 C++ API predicate tests
 tests/integration/ end-to-end pipeline tests
 tests/programs/   .mc files in phaseN/ subdirs
 lean/             lakefile.lean (local mathlib4+cslib), MiniCompiler/*.lean
