@@ -86,71 +86,69 @@ Per subtask, agents work in this order:
 
 ---
 
-## Phase 0: Project Scaffold & Tooling
+## Phase 0: Project Scaffold & Tooling ✅
 
-- [ ] CMake build system with Flex/Bison + Google Test + Z3 + clang-tidy
-- [ ] `.clang-tidy` + `.clang-format` configs
-- [ ] `.mcp.json` (context7 MCP server)
-- [ ] `.changeset/` folder with convention README
-- [ ] `lean/lakefile.lean` with local mathlib4 + cslib deps
-- [ ] `lean/lean-toolchain` matching v4.29.0-rc1
-- [ ] Flex `.l` skeleton (whitespace, comments, error token)
-- [ ] Bison `.y` skeleton (empty grammar, error recovery)
-- [ ] AST node base class hierarchy (`ASTNode`, `Expr`, `Stmt`, `Program`)
-- [ ] Pretty-printer / AST dump (for debugging every later phase)
-- [ ] `runtime.c` stub (provides `read_int`, `print_int`, links with generated asm)
-- [ ] End-to-end smoke test: empty program compiles, assembles, links, runs
+- [x] CMake build system with Google Test + clang-tidy
+- [x] `.clang-tidy` + `.clang-format` configs
+- [x] `.mcp.json` (context7 MCP server)
+- [x] `.changeset/` folder with convention README
+- [x] `lean/lakefile.lean` with local mathlib4 + cslib deps
+- [x] `lean/lean-toolchain` matching v4.29.0-rc1
+- [x] AST node base class hierarchy (`Expr`, `Program`)
+- [x] Pretty-printer / AST dump (iterative S-expr format)
+- [x] `runtime.c` (`read_int`, `print_int`, links with generated asm)
 
 ---
 
-## Phase 1: Integers & Variables (Book Ch. 2, pp. 11-32)
+## Phase 1: Integers & Variables (Book Ch. 2, pp. 11-32) ✅
 
 **Language: L_Var** — `int` literals, `read()`, unary `-`, binary `+`/`-`, `let` bindings.
 
-### 1A — Frontend
+### 1A — Frontend ✅
 
-- [ ] Lexer tokens: `INT_LIT`, `IDENT`, `LET`, `IN`, `READ`, `+`, `-`, `(`, `)`, `=`, `;`
-- [ ] Grammar rules: `program`, `expr` (int, var, read, neg, add, sub, let)
-- [ ] AST nodes: `IntExpr`, `VarExpr`, `ReadExpr`, `UnaryExpr`, `BinaryExpr`, `LetExpr`, `Program`
-- [ ] Tree-walk interpreter for L_Var (validates semantics before codegen)
-- [ ] Test: interpreter produces correct results on 5+ programs
+- [x] Hand-written lexer + recursive-descent parser (C-like syntax: `let x = e; body`, `read()`)
+- [x] AST nodes: `IntExpr`, `VarExpr`, `ReadExpr`, `UnaryExpr`, `BinaryExpr`, `LetExpr`, `Program`
+- [x] Iterative interpreter (explicit stack, no recursion)
+- [x] All traversals use Eval/Apply pattern with explicit stacks
 
-### 1B — Compiler Passes
+### 1B — Compiler Passes ✅
 
-- [ ] **uniquify** — alpha-rename variables to guarantee unique names
-- [ ] **remove_complex_operands** — flatten to monadic normal form (A-normal form); every operand of `+`/`-` is atomic (var or int)
-- [ ] **explicate_control** — convert to C_Var IR: list of `label: tail` blocks with `return`, `seq` (stmt; tail), assignments
-- [ ] **select_instructions** — lower C_Var to pseudo-x86 (movq, addq, subq, negq, callq read_int, retq) using virtual variable names
-- [ ] **assign_homes** — naively place all variables on stack (`-8(%rbp)`, `-16(%rbp)`, ...)
-- [ ] **patch_instructions** — fix illegal two-memory-operand instructions via `%rax` scratch
-- [ ] **generate_prelude_conclusion** — emit `.globl main`, push/pop `%rbp`, adjust `%rsp`, `retq`
-- [ ] Emit x86-64 AT&T assembly to `.s` file
-- [ ] End-to-end: `source -> asm -> gcc link runtime.c -> executable -> correct output`
-- [ ] Test suite: 10+ programs covering all L_Var constructs
+- [x] **uniquify** — alpha-rename variables (`x` → `x.1`, `x.2`)
+- [x] **remove_complex_operands** — A-normal form; all operands atomic
+- [x] **explicate_control** — AST → C_Var IR (basic blocks)
+- [x] **select_instructions** — C_Var → pseudo-x86
+- [x] **assign_homes** — vars → stack slots (`-8(%rbp)`, `-16(%rbp)`, ...)
+- [x] **patch_instructions** — fix two-memory-operand via `%rax`
+- [x] **generate_prelude_conclusion** — `.globl main`, frame setup/teardown
+- [x] **emit** — AT&T syntax assembly output
+- [x] CLI driver: `mc input.mc -o output.s` / `mc -i input.mc`
+- [x] End-to-end: 12/12 `.mc` programs compile → assemble → link → correct output
 
-### 1 — Tests (TDD, write before implementation)
+### 1 — Tests ✅
 
-- [ ] `test_uniquify.cpp` — no shadowing after rename, semantics preserved
-- [ ] `test_rco.cpp` — all operands atomic after flattening, no nested `+`/`-`
-- [ ] `test_explicate.cpp` — valid C_Var IR (all tails end in return/goto)
-- [ ] `test_select_instructions.cpp` — correct x86 opcodes for each C_Var form
-- [ ] `test_assign_homes.cpp` — all vars mapped to stack slots, no overlap
-- [ ] `test_patch.cpp` — no two-memory-operand instructions remain
-- [ ] Integration: 10+ `.mc` programs in `tests/programs/phase1/`
+- [x] `test_parser.cpp` — AST dump() verification
+- [x] `test_interpreter.cpp` — interpret with manual ASTs
+- [x] `test_uniquify.cpp` — no shadowing after rename
+- [x] `test_rco.cpp` — all operands atomic
+- [x] `test_explicate.cpp` — valid C_Var IR structure
+- [x] `test_select_instructions.cpp` — correct x86 opcodes
+- [x] `test_assign_homes.cpp` — no VarArg remains
+- [x] `test_patch.cpp` — no two-memory-operand violations
+- [x] `test_pipeline.cpp` — full integration test
+- [x] 12 `.mc` programs in `tests/programs/phase1/`
 
-### 1 — Z3 Predicate Tests
+### 1 — Lean Stubs (sorry'd)
 
-- [ ] `no_shadowing(uniquify(P))` — ForAll vars in output, no two bindings share a name
-- [ ] `all_atomic_operands(rco(P))` — ForAll expr in operand positions, `is_atomic(expr)`
-- [ ] `valid_cvar_form(explicate(P))` — all tails well-formed (return/seq/goto)
+- [x] `AST.lean` — L_Var inductive types mirroring C++ AST
+- [x] `Passes/Uniquify.lean` — sorry stub
+- [x] `Passes/RCO.lean` — sorry stub
+- [x] `Passes/ExplicateControl.lean` — C_Var IR types + sorry stub
+- [x] `Passes/SelectInstructions.lean` — sorry stub
 
-### 1 — Lean Proofs
+### 1 — Deferred
 
-- [ ] `uniquify_preserves_semantics` — `eval(uniquify(e), σ') = eval(e, σ)` where `σ'` is the renamed env
-- [ ] `rco_atomic_invariant` — all operands of `+`/`-` are `IntExpr` or `VarExpr`
-- [ ] `rco_preserves_semantics` — `eval(rco(e)) = eval(e)`
-- [ ] `explicate_preserves_semantics` — C_Var IR evaluates to same result
-- [ ] `select_instructions_correct` — pseudo-x86 execution matches C_Var semantics
+- [ ] Z3 predicate tests (skipped for Phase 1)
+- [ ] Lean proofs (sorry stubs only, real proofs TBD)
 
 ---
 
@@ -452,10 +450,10 @@ Replace naive stack allocation with graph-coloring register allocator.
 Source (.mc)
     |
     v
- [Flex Lexer] -> tokens
+ [Lexer] -> tokens
     |
     v
- [Bison Parser] -> AST
+ [Parser] -> AST
     |
     v
  [Type Checker] -> typed AST
@@ -532,8 +530,8 @@ mini-compiler/
 │   └── book.pdf
 ├── src/
 │   ├── CMakeLists.txt
-│   ├── lexer.l                      # Flex
-│   ├── parser.y                     # Bison
+│   ├── lexer.h / lexer.cpp          # hand-written tokenizer
+│   ├── parser.h / parser.cpp        # recursive-descent parser
 │   ├── ast.h / ast.cpp
 │   ├── type_checker.h / .cpp
 │   ├── interpreter.h / .cpp
