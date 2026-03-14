@@ -1,0 +1,22 @@
+Checks: >
+  -*,
+  bugprone-*,
+  cppcoreguidelines-*,
+  modernize-*,
+  performance-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-identifier-length,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-owning-memory
+
+CheckOptions:
+  - key: readability-function-size.LineThreshold
+    value: 30
+  - key: readability-function-size.StatementThreshold
+    value: 40
+
+WarningsAsErrors: >
+  readability-function-size

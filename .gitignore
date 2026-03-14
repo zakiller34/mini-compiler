@@ -1,0 +1,34 @@
+# Build
+build/
+cmake-build-*/
+compile_commands.json
+
+# Flex/Bison generated
+*.tab.c
+*.tab.h
+*.yy.c
+*.yy.h
+*.output
+
+# C/C++ objects
+*.o
+*.a
+*.so
+*.dylib
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Lean
+lean/.lake/
+lean/lake-packages/
+lean/lake-manifest.json
+lean/build/
+
+# Zone.Identifier (WSL artifact)
+*:Zone.Identifier
