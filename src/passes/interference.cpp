@@ -1,0 +1,147 @@
+#include "interference.h"
+
+namespace {
+
+/// Canonical pair ordering for move_edges
+std::pair<Location, Location> canonical_pair(const Location &a,
+                                             const Location &b) {
+    return (a < b) ? std::make_pair(a, b) : std::make_pair(b, a);
+}
+
+} // namespace
+
+void Graph::add_edge(const Location &u, const Location &v) {
+    if (u == v) {
+        return; // no self-edges
+    }
+    nodes.insert(u);
+    nodes.insert(v);
+    adj[u].insert(v);
+    adj[v].insert(u);
+}
+
+void Graph::add_move_edge(const Location &u, const Location &v) {
+    if (u == v) {
+        return;
+    }
+    move_edges.insert(canonical_pair(u, v));
+}
+
+bool Graph::has_edge(const Location &u, const Location &v) const {
+    auto it = adj.find(u);
+    if (it == adj.end()) {
+        return false;
+    }
+    return it->second.count(v) > 0;
+}
+
+const std::vector<x86::Reg> &caller_saved_regs() {
+    static const std::vector<x86::Reg> regs = {
+        x86::Reg::Rax, x86::Reg::Rcx,  x86::Reg::Rdx, x86::Reg::Rsi,
+        x86::Reg::Rdi, x86::Reg::R8,   x86::Reg::R9,  x86::Reg::R10,
+        x86::Reg::R11};
+    return regs;
+}
+
+/// @brief Build interference graph
+/// @requires live_after.size() == instrs.size()
+/// @ensures edge(u,v) iff simultaneously live at some point
+/// @ensures movq src,dst: no interference edge between src,dst; move_edge added
+/// @ensures callq: edges between all live vars and caller-saved regs
+Graph build_interference(const std::vector<x86::Instr> &instrs,
+                         const std::vector<std::set<std::string>> &live_after) {
+    Graph graph;
+
+    // Add all vars as nodes
+    // invariant: graph.nodes accumulates all vars seen in live_after sets
+    for (size_t i = 0; i < live_after.size(); ++i) {
+        for (const auto &v : live_after[i]) {
+            graph.nodes.insert(Location{v});
+        }
+    }
+
+    // invariant: edges added for instrs[0..k)
+    // decreases: instrs.size() - k
+    for (size_t k = 0; k < instrs.size(); ++k) {
+        const auto &instr = instrs[k];
+        const auto &live = live_after[k];
+
+        if (const auto *m = std::get_if<x86::Movq>(&instr)) {
+            // movq src, dst: add edges from dst to all live-after except dst
+            // and src Special: no edge between src and dst (move-related)
+            Location src_loc;
+            if (const auto *sv = std::get_if<x86::VarArg>(&m->src)) {
+                src_loc = Location{sv->name};
+            } else if (const auto *sr = std::get_if<x86::RegArg>(&m->src)) {
+                src_loc = Location{sr->reg};
+            }
+
+            Location dst_loc;
+            bool has_dst = false;
+            if (const auto *dv = std::get_if<x86::VarArg>(&m->dst)) {
+                dst_loc = Location{dv->name};
+                has_dst = true;
+            } else if (const auto *dr = std::get_if<x86::RegArg>(&m->dst)) {
+                dst_loc = Location{dr->reg};
+                has_dst = true;
+            }
+
+            if (has_dst) {
+                for (const auto &v : live) {
+                    Location v_loc{v};
+                    if (v_loc != dst_loc && v_loc != src_loc) {
+                        graph.add_edge(dst_loc, v_loc);
+                    }
+                }
+                // Record move edge for biasing
+                if (src_loc != dst_loc) {
+                    graph.add_move_edge(src_loc, dst_loc);
+                }
+            }
+        } else if (std::holds_alternative<x86::Callq>(instr)) {
+            // Callq clobbers caller-saved regs: add edges with all live vars
+            for (const auto &v : live) {
+                Location v_loc{v};
+                for (auto reg : caller_saved_regs()) {
+                    graph.add_edge(v_loc, Location{reg});
+                }
+            }
+        } else {
+            // General case: add edges from written vars to all live-after
+            // except the written var itself
+            if (const auto *a = std::get_if<x86::Addq>(&instr)) {
+                if (const auto *dv = std::get_if<x86::VarArg>(&a->dst)) {
+                    Location dst_loc{dv->name};
+                    for (const auto &v : live) {
+                        Location v_loc{v};
+                        if (v_loc != dst_loc) {
+                            graph.add_edge(dst_loc, v_loc);
+                        }
+                    }
+                }
+            } else if (const auto *s = std::get_if<x86::Subq>(&instr)) {
+                if (const auto *dv = std::get_if<x86::VarArg>(&s->dst)) {
+                    Location dst_loc{dv->name};
+                    for (const auto &v : live) {
+                        Location v_loc{v};
+                        if (v_loc != dst_loc) {
+                            graph.add_edge(dst_loc, v_loc);
+                        }
+                    }
+                }
+            } else if (const auto *n = std::get_if<x86::Negq>(&instr)) {
+                if (const auto *dv = std::get_if<x86::VarArg>(&n->dst)) {
+                    Location dst_loc{dv->name};
+                    for (const auto &v : live) {
+                        Location v_loc{v};
+                        if (v_loc != dst_loc) {
+                            graph.add_edge(dst_loc, v_loc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return graph;
+}

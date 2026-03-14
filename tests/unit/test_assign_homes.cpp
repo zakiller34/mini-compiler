@@ -50,6 +50,25 @@ static bool no_var_args(const x86::X86Program &prog) {
   return true;
 }
 
+/// Check if any arg in the program is a RegArg (not Deref/Imm)
+static bool has_reg_args(const x86::X86Program &prog) {
+  for (const auto &[label, blk] : prog.blocks) {
+    for (const auto &instr : blk.instrs) {
+      auto check = [](const x86::Arg &a) {
+        return std::holds_alternative<x86::RegArg>(a);
+      };
+      if (std::holds_alternative<x86::Movq>(instr)) {
+        const auto &m = std::get<x86::Movq>(instr);
+        if (check(m.src) || check(m.dst)) return true;
+      } else if (std::holds_alternative<x86::Addq>(instr)) {
+        const auto &a = std::get<x86::Addq>(instr);
+        if (check(a.src) || check(a.dst)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 TEST(AssignHomes, IntLiteralNoVars) {
   auto prog = run_assign(std::make_unique<IntExpr>(42));
   EXPECT_TRUE(no_var_args(prog));
@@ -68,8 +87,8 @@ TEST(AssignHomes, LetBindingNoVars) {
   EXPECT_TRUE(no_var_args(prog));
 }
 
-TEST(AssignHomes, StackSpacePositive) {
-  // let x = 5; let y = 10; x + y — needs stack space
+TEST(AssignHomes, VarsAssignedToRegisters) {
+  // let x = 5; let y = 10; x + y — 2 vars, fits in registers
   auto inner = std::make_unique<LetExpr>(
       "y",
       std::make_unique<IntExpr>(10),
@@ -83,5 +102,27 @@ TEST(AssignHomes, StackSpacePositive) {
       std::move(inner));
   auto prog = run_assign(std::move(e));
   EXPECT_TRUE(no_var_args(prog));
-  EXPECT_GT(prog.stack_space, 0);
+  // With register allocation, 2 vars should fit in regs (no spills)
+  EXPECT_EQ(prog.stack_space, 0);
+  EXPECT_TRUE(has_reg_args(prog));
+}
+
+TEST(AssignHomes, ReadVarLiveAcrossCall) {
+  // let x = read(); let y = read(); x + y
+  // x is live across the second callq read_int
+  auto inner = std::make_unique<LetExpr>(
+      "y",
+      std::make_unique<ReadExpr>(),
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Add,
+          std::make_unique<VarExpr>("x"),
+          std::make_unique<VarExpr>("y")));
+  auto e = std::make_unique<LetExpr>(
+      "x",
+      std::make_unique<ReadExpr>(),
+      std::move(inner));
+  auto prog = run_assign(std::move(e));
+  EXPECT_TRUE(no_var_args(prog));
+  // x live across callq => can't use caller-saved regs for x
+  // Should still succeed (use callee-saved or different reg)
 }

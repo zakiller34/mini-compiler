@@ -8,6 +8,9 @@ set(TEST_SOURCES
     test_rco
     test_explicate
     test_select_instructions
+    test_liveness
+    test_interference
+    test_coloring
     test_assign_homes
     test_patch
 )

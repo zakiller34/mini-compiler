@@ -1,4 +1,4 @@
-# src/CMakeLists.txt — Phase 1: L_Var compiler
+# src/CMakeLists.txt — Phase 2: L_Var compiler + register allocation
 
 # Static library with all compiler logic
 add_library(mc_lib STATIC
@@ -12,6 +12,9 @@ add_library(mc_lib STATIC
     passes/rco.cpp
     passes/explicate_control.cpp
     passes/select_instructions.cpp
+    passes/liveness.cpp
+    passes/interference.cpp
+    passes/graph_coloring.cpp
     passes/assign_homes.cpp
     passes/patch_instructions.cpp
     passes/prelude_conclusion.cpp

@@ -71,6 +71,7 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
 x86::X86Program patch_instructions(const x86::X86Program &prog) {
     x86::X86Program result;
     result.stack_space = prog.stack_space;
+    result.used_callee_saved = prog.used_callee_saved;
 
     // invariant: result.blocks has all patched blocks processed so far
     // decreases: prog.blocks.end() - it

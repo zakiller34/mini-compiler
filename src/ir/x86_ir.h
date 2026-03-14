@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <variant>
 #include <vector>
@@ -88,6 +89,7 @@ struct Block {
 struct X86Program {
   std::map<std::string, Block> blocks;
   int64_t stack_space = 0;
+  std::set<Reg> used_callee_saved;
   std::string dump() const;
 };
 

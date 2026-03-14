@@ -1,9 +1,7 @@
 add_subdirectory(unit)
 
 # Z3 predicate tests
-# if(Z3_FOUND)
-#     add_subdirectory(z3)
-# endif()
+add_subdirectory(z3)
 
 # Integration tests
 add_subdirectory(integration)
