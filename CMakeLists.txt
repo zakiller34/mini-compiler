@@ -11,10 +11,6 @@ if(CLANG_TIDY_EXE)
     set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
 endif()
 
-# Flex/Bison
-find_package(FLEX REQUIRED)
-find_package(BISON REQUIRED)
-
 # Google Test
 include(FetchContent)
 FetchContent_Declare(

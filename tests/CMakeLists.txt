@@ -1,6 +1,4 @@
-# tests/CMakeLists.txt — filled per phase
-# Unit tests (Google Test)
-# add_subdirectory(unit)
+add_subdirectory(unit)
 
 # Z3 predicate tests
 # if(Z3_FOUND)
@@ -8,4 +6,4 @@
 # endif()
 
 # Integration tests
-# add_subdirectory(integration)
+add_subdirectory(integration)
