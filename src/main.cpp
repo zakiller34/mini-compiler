@@ -2,6 +2,7 @@
 #include "interpreter.h"
 #include "lexer.h"
 #include "parser.h"
+#include "type_checker.h"
 #include "passes/assign_homes.h"
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
@@ -9,6 +10,7 @@
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
 #include "passes/select_instructions.h"
+#include "passes/shrink.h"
 #include "passes/uniquify.h"
 
 #include <cstring>
@@ -17,9 +19,6 @@
 #include <memory>
 #include <string>
 
-/// @brief Parse source file into AST Program
-/// @requires filename points to valid .mc file
-/// @ensures result contains parsed AST, nullptr on error
 std::unique_ptr<Program> parse_file(const std::string &filename) {
     std::ifstream ifs(filename);
     if (!ifs) {
@@ -31,16 +30,18 @@ std::unique_ptr<Program> parse_file(const std::string &filename) {
     return parser.parse_program();
 }
 
-/// @brief Run full compilation pipeline: parse -> ... -> emit
-/// @requires src_file is valid .mc path, out_file is writable path
-/// @ensures out_file contains x86-64 AT&T assembly
 int compile(const std::string &src_file, const std::string &out_file) {
     auto prog = parse_file(src_file);
-    if (prog == nullptr) {
+    if (prog == nullptr) return 1;
+
+    try { type_check(*prog); }
+    catch (const TypeError &e) {
+        std::cerr << "type error: " << e.what() << "\n";
         return 1;
     }
 
-    auto p1 = uniquify(*prog);
+    auto p0 = shrink(*prog);
+    auto p1 = uniquify(*p0);
     auto p2 = remove_complex_operands(*p1);
     auto c_prog = explicate_control(*p2);
     auto x1 = select_instructions(c_prog);
@@ -58,14 +59,25 @@ int compile(const std::string &src_file, const std::string &out_file) {
     return 0;
 }
 
-/// @brief Run interpreter mode
-/// @requires src_file is valid .mc path
-/// @ensures prints interpreted result to stdout
-int run_interpret(const std::string &src_file, const std::string &input_file) {
+int run_interpret(const std::string &src_file,
+                  const std::string &input_file) {
     auto prog = parse_file(src_file);
-    if (prog == nullptr) {
+    if (prog == nullptr) return 1;
+
+    try { type_check(*prog); }
+    catch (const TypeError &e) {
+        std::cerr << "type error: " << e.what() << "\n";
         return 1;
     }
+
+    auto do_interp = [&](std::istream &in) {
+        Value result = interpret(*prog, in);
+        if (auto *i = std::get_if<int64_t>(&result)) {
+            std::cout << *i << "\n";
+        } else {
+            std::cout << (std::get<bool>(result) ? "true" : "false") << "\n";
+        }
+    };
 
     if (!input_file.empty()) {
         std::ifstream ifs(input_file);
@@ -73,17 +85,13 @@ int run_interpret(const std::string &src_file, const std::string &input_file) {
             std::cerr << "error: cannot open " << input_file << "\n";
             return 1;
         }
-        int64_t result = interpret(*prog, ifs);
-        std::cout << result << "\n";
+        do_interp(ifs);
     } else {
-        int64_t result = interpret(*prog, std::cin);
-        std::cout << result << "\n";
+        do_interp(std::cin);
     }
     return 0;
 }
 
-/// @brief CLI entry point
-/// @ensures returns 0 on success, 1 on error
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         std::cerr << "usage: mc <input.mc> -o <output.s>\n";
@@ -91,7 +99,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Interpret mode: mc -i input.mc [-input input.txt]
     if (std::strcmp(argv[1], "-i") == 0) {
         if (argc < 3) {
             std::cerr << "usage: mc -i <input.mc> [-input <input.txt>]\n";
@@ -104,7 +111,6 @@ int main(int argc, char *argv[]) {
         return run_interpret(argv[2], input_file);
     }
 
-    // Compile mode: mc input.mc -o output.s
     if (argc < 4 || std::strcmp(argv[2], "-o") != 0) {
         std::cerr << "usage: mc <input.mc> -o <output.s>\n";
         return 1;

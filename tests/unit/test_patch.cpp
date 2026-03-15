@@ -11,11 +11,12 @@
 #include "passes/rco.h"
 #include "passes/select_instructions.h"
 #include "passes/uniquify.h"
+#include "passes/shrink.h"
 
 /// Helper: run pipeline through patch_instructions.
 static x86::X86Program run_patch(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
-  auto u = uniquify(prog);
+  auto s0__ = shrink(prog); auto u = uniquify(*s0__);
   auto r = remove_complex_operands(*u);
   auto c = explicate_control(*r);
   auto s = select_instructions(c);

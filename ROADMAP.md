@@ -70,66 +70,68 @@ Based on *Essentials of Compilation* (Siek, 2023). Each phase adds language feat
 
 ---
 
-## Phase 2: Register Allocation (Book Ch. 3, pp. 33-53)
+## Phase 2: Register Allocation (Book Ch. 3, pp. 33-53) ✅
 
 Replace naive stack allocation with graph-coloring register allocator.
 
-- [ ] **liveness analysis** — backward pass over instructions; compute live-after sets per instruction
-- [ ] **build interference graph** — undirected graph: edge between vars live at same time; special handling for `movq` (no edge if src == dst)
-- [ ] **graph coloring** (DSATUR / saturation-based) — map variables to colors; colors 0..12 map to allocable registers, rest spill to stack
-- [ ] Register mapping: `rbx, rcx, rdx, rsi, rdi, r8-r15` minus reserved (`rax`, `rsp`, `rbp`, `r11`, `r15`)
-- [ ] Update **assign_homes** to use coloring result
-- [ ] Update **patch_instructions** for register-to-register moves
-- [ ] Update **prelude/conclusion** to save/restore only used callee-saved registers
-- [ ] **Challenge: move biasing** — prefer assigning same color to src/dst of `movq`
-- [ ] Test: existing suite still passes; verify fewer stack accesses
+- [x] **liveness analysis** — backward pass over instructions; compute live-after sets per instruction
+- [x] **build interference graph** — undirected graph: edge between vars live at same time; special handling for `movq` (no edge if src == dst)
+- [x] **graph coloring** (DSATUR / saturation-based) — map variables to colors; colors 0..12 map to allocable registers, rest spill to stack
+- [x] Register mapping: `rcx, rdx, rsi, rdi, r8-r10` (caller-saved) + `rbx, r12-r14` (callee-saved); reserved: `rax, rsp, rbp, r11, r15`
+- [x] Update **assign_homes** to use coloring result
+- [x] Update **patch_instructions** for register-to-register moves
+- [x] Update **prelude/conclusion** to save/restore only used callee-saved registers
+- [x] **Challenge: move biasing** — prefer assigning same color to src/dst of `movq`
+- [x] Test: existing suite still passes; verify fewer stack accesses
 
-### 2 — Tests (TDD)
+### 2 — Tests (TDD) ✅
 
-- [ ] `test_liveness.cpp` — live-after sets correct for known instruction sequences
-- [ ] `test_interference.cpp` — edges present/absent for expected var pairs
-- [ ] `test_coloring.cpp` — valid coloring (no adjacent same color), minimal spills
-- [ ] Integration: phase 1 programs still produce correct output
+- [x] `test_liveness.cpp` — live-after sets correct for known instruction sequences
+- [x] `test_interference.cpp` — edges present/absent for expected var pairs
+- [x] `test_coloring.cpp` — valid coloring (no adjacent same color), minimal spills
+- [x] Integration: phase 1 programs still produce correct output
 
-### 2 — Z3 Predicate Tests
+### 2 — Z3 Predicate Tests ✅
 
-- [ ] `valid_coloring(graph, colors)` — ForAll (u,v) in edges, `color(u) != color(v)`
-- [ ] `liveness_covers_uses(live_sets, instrs)` — ForAll v k, `used_later(v,k) => v in live_after(k)`
+- [x] `valid_coloring(graph, colors)` — ForAll (u,v) in edges, `color(u) != color(v)`
+- [x] `liveness_covers_uses(live_sets, instrs)` — ForAll v k, `used_later(v,k) => v in live_after(k)`
 
-### 2 — Lean Proofs
+### 2 — Lean Proofs ✅
 
-- [ ] `liveness_sound` — every used variable is in the live-after set of its definition point
-- [ ] `interference_correct` — edge iff two vars simultaneously live
-- [ ] `coloring_valid` — no two adjacent nodes share a color
-- [ ] `dsatur_terminates` — DSATUR loop terminates (uncolored count decreases)
+- [x] `liveness_sound` — every used variable is in the live-after set of its definition point
+- [x] `interference_correct` — edge iff two vars simultaneously live
+- [x] `coloring_valid` — no two adjacent nodes share a color
+- [x] `dsatur_terminates` — DSATUR loop terminates (uncolored count decreases)
 
 ---
 
-## Phase 3: Booleans & Conditionals (Book Ch. 4, pp. 55-79)
+## Phase 3: Booleans & Conditionals (Book Ch. 4, pp. 55-79) — IN PROGRESS
 
 **Language: L_If** — extends L_Var with `bool`, `if/else`, comparisons, logic ops.
 
-### 3A — Frontend
+### 3A — Frontend ✅
 
-- [ ] New tokens: `TRUE`, `FALSE`, `IF`, `ELSE`, `AND`, `OR`, `NOT`, `EQ` (`==`), `LT` (`<`), `LE` (`<=`), `GT` (`>`), `GE` (`>=`)
-- [ ] Grammar: `if (expr) expr else expr`, boolean literals, comparison/logic exprs
-- [ ] AST nodes: `BoolExpr`, `IfExpr`, `CmpExpr`, `NotExpr`, `AndExpr`, `OrExpr`
-- [ ] **Type checker** — two types: `Integer`, `Boolean`; enforce operand types; `if` branches same type; condition must be `Boolean`
-- [ ] Interpreter: extend with bools, short-circuit `and`/`or`
+- [x] New tokens: `TRUE`, `FALSE`, `IF`, `ELSE`, `AND`, `OR`, `NOT`, `EQ` (`==`), `LT` (`<`), `LE` (`<=`), `GT` (`>`), `GE` (`>=`), `{`, `}`
+- [x] Grammar: `if (cond) { then } else { else }`, boolean literals, comparison/logic exprs
+- [x] AST nodes: `BoolExpr`, `IfExpr`; extended `UnaryOp::Not`, `BinaryOp::And/Or/Eq/Lt/Le/Gt/Ge`
+- [x] **Type checker** — two types: `Int`, `Bool`; enforce operand types; `if` branches same type; condition must be `Bool`; `==` works on both Int and Bool
+- [x] Interpreter: extend with `variant<int64_t, bool>` values, short-circuit `and`/`or`
 
-### 3B — Compiler Passes
+### 3B — Compiler Passes ✅
 
-- [ ] **shrink** — desugar `and`/`or` to `if`: `(and a b)` -> `(if a b false)`, `(or a b)` -> `(if a true b)`
-- [ ] Update **uniquify** for `if` and bool
-- [ ] Update **remove_complex_operands** — `if` condition not flattened; `not`/`cmp` operands must be atomic
-- [ ] **explicate_control** — produce C_If IR with `goto label`, `if (cmp) goto l1 else goto l2`; `explicate_pred` for predicate context (compile comparisons directly to conditional jumps)
-- [ ] **select_instructions** — `cmpq`, `setCC`, `movzbq` for comparisons; `xorq $1` for `not`; `jCC`/`jmp` for control flow; booleans encoded as 0/1
-- [ ] Liveness analysis across multiple basic blocks (topological order on CFG)
-- [ ] Update interference graph for `movzbq`, new instructions
+- [x] **shrink** — desugar `and`/`or` to `if`: `(and a b)` → `(if a b false)`, `(or a b)` → `(if a true b)`
+- [x] Update **uniquify** for `if` and bool
+- [x] Update **remove_complex_operands** — `if` condition in `Need::Expr`; `not`/`cmp` operands `Need::Atom`
+- [x] **explicate_control** — produce C_If IR with `Tail` variant (`Return`/`Goto`/`IfStmt`); `explicate_pred` for predicate context; worklist-based block generation
+- [x] **select_instructions** — `cmpq`, `setCC`, `movzbq` for comparisons; `xorq $1` for `not`; `jCC`/`jmp` for control flow; booleans encoded as 0/1
+- [x] Liveness analysis across multiple basic blocks (topo-sort on DAG CFG)
+- [x] Update interference graph for `movzbq`, `Cmpq`, `SetCC`, `Xorq`, `JmpIf`
+- [x] Update `patch_instructions` for `cmpq` imm-dst fix
+- [x] Update `emit` for new instructions + multi-block emission order
 - [ ] **Challenge: optimize blocks** — remove trivial jumps, merge blocks
-- [ ] Test: 10+ programs with nested ifs, comparisons, booleans
+- [x] End-to-end: 6 phase3 .mc programs compile correctly; 12 phase1 programs still pass
 
-### 3 — Tests (TDD)
+### 3 — Tests (TDD) — REMAINING
 
 - [ ] `test_type_checker.cpp` — accept well-typed, reject ill-typed programs
 - [ ] `test_shrink.cpp` — and/or desugared to if; output semantically equivalent

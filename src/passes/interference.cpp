@@ -107,30 +107,39 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                 }
             }
         } else {
-            // General case: add edges from written vars to all live-after
-            // except the written var itself
+            // General case: extract written VarArg dst, add edges to live
+            const x86::Arg *dst_arg = nullptr;
             if (const auto *a = std::get_if<x86::Addq>(&instr)) {
-                if (const auto *dv = std::get_if<x86::VarArg>(&a->dst)) {
-                    Location dst_loc{dv->name};
-                    for (const auto &v : live) {
-                        Location v_loc{v};
-                        if (v_loc != dst_loc) {
-                            graph.add_edge(dst_loc, v_loc);
-                        }
-                    }
-                }
+                dst_arg = &a->dst;
             } else if (const auto *s = std::get_if<x86::Subq>(&instr)) {
-                if (const auto *dv = std::get_if<x86::VarArg>(&s->dst)) {
+                dst_arg = &s->dst;
+            } else if (const auto *n = std::get_if<x86::Negq>(&instr)) {
+                dst_arg = &n->dst;
+            } else if (const auto *x = std::get_if<x86::Xorq>(&instr)) {
+                dst_arg = &x->dst;
+            } else if (const auto *sc = std::get_if<x86::SetCC>(&instr)) {
+                dst_arg = &sc->dst;
+            } else if (const auto *mz = std::get_if<x86::Movzbq>(&instr)) {
+                // Movzbq: like Movq (no edge between src and dst)
+                Location src_loc;
+                if (const auto *sv = std::get_if<x86::VarArg>(&mz->src)) {
+                    src_loc = Location{sv->name};
+                } else if (const auto *sr = std::get_if<x86::RegArg>(&mz->src)) {
+                    src_loc = Location{sr->reg};
+                }
+                if (const auto *dv = std::get_if<x86::VarArg>(&mz->dst)) {
                     Location dst_loc{dv->name};
                     for (const auto &v : live) {
                         Location v_loc{v};
-                        if (v_loc != dst_loc) {
+                        if (v_loc != dst_loc && v_loc != src_loc) {
                             graph.add_edge(dst_loc, v_loc);
                         }
                     }
                 }
-            } else if (const auto *n = std::get_if<x86::Negq>(&instr)) {
-                if (const auto *dv = std::get_if<x86::VarArg>(&n->dst)) {
+                dst_arg = nullptr; // already handled
+            }
+            if (dst_arg != nullptr) {
+                if (const auto *dv = std::get_if<x86::VarArg>(dst_arg)) {
                     Location dst_loc{dv->name};
                     for (const auto &v : live) {
                         Location v_loc{v};
@@ -140,6 +149,7 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                     }
                 }
             }
+            // Cmpq, JmpIf, Jmp, Pushq, Popq, Retq: no var writes
         }
     }
 

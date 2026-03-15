@@ -4,10 +4,10 @@
 #include <memory>
 #include <string>
 
-enum class UnaryOp { Neg };
-enum class BinaryOp { Add, Sub };
+enum class UnaryOp { Neg, Not };
+enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
-/// Base class for all expressions in L_Var.
+/// Base class for all expressions in L_If.
 class Expr {
 public:
   virtual ~Expr() = default;
@@ -21,6 +21,13 @@ class IntExpr : public Expr {
 public:
   int64_t value;
   explicit IntExpr(int64_t v) : value(v) {}
+  std::string dump() const override;
+};
+
+class BoolExpr : public Expr {
+public:
+  bool value;
+  explicit BoolExpr(bool v) : value(v) {}
   std::string dump() const override;
 };
 
@@ -52,6 +59,18 @@ public:
   std::unique_ptr<Expr> rhs;
   BinaryExpr(BinaryOp o, std::unique_ptr<Expr> l, std::unique_ptr<Expr> r)
       : op(o), lhs(std::move(l)), rhs(std::move(r)) {}
+  std::string dump() const override;
+};
+
+class IfExpr : public Expr {
+public:
+  std::unique_ptr<Expr> cond;
+  std::unique_ptr<Expr> then_branch;
+  std::unique_ptr<Expr> else_branch;
+  IfExpr(std::unique_ptr<Expr> c, std::unique_ptr<Expr> t,
+         std::unique_ptr<Expr> e)
+      : cond(std::move(c)), then_branch(std::move(t)),
+        else_branch(std::move(e)) {}
   std::string dump() const override;
 };
 

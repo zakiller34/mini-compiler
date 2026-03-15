@@ -4,32 +4,43 @@
 
 namespace x86 {
 
-/// @brief Map register enum to AT&T name
-/// @ensures result starts with '%'
 std::string reg_name(Reg r) {
     switch (r) {
-    case Reg::Rsp: return "%rsp";
-    case Reg::Rbp: return "%rbp";
-    case Reg::Rax: return "%rax";
-    case Reg::Rbx: return "%rbx";
-    case Reg::Rcx: return "%rcx";
-    case Reg::Rdx: return "%rdx";
-    case Reg::Rsi: return "%rsi";
-    case Reg::Rdi: return "%rdi";
-    case Reg::R8: return "%r8";
-    case Reg::R9: return "%r9";
-    case Reg::R10: return "%r10";
-    case Reg::R11: return "%r11";
-    case Reg::R12: return "%r12";
-    case Reg::R13: return "%r13";
-    case Reg::R14: return "%r14";
-    case Reg::R15: return "%r15";
+    case Reg::Rsp: return "%rsp"; case Reg::Rbp: return "%rbp";
+    case Reg::Rax: return "%rax"; case Reg::Rbx: return "%rbx";
+    case Reg::Rcx: return "%rcx"; case Reg::Rdx: return "%rdx";
+    case Reg::Rsi: return "%rsi"; case Reg::Rdi: return "%rdi";
+    case Reg::R8: return "%r8";   case Reg::R9: return "%r9";
+    case Reg::R10: return "%r10"; case Reg::R11: return "%r11";
+    case Reg::R12: return "%r12"; case Reg::R13: return "%r13";
+    case Reg::R14: return "%r14"; case Reg::R15: return "%r15";
     }
     return "%unknown";
 }
 
-/// @brief Dump an Arg in AT&T syntax
-/// @ensures result is valid AT&T operand string
+std::string byte_reg_name(Reg r) {
+    switch (r) {
+    case Reg::Rax: return "%al";  case Reg::Rbx: return "%bl";
+    case Reg::Rcx: return "%cl";  case Reg::Rdx: return "%dl";
+    case Reg::Rsi: return "%sil"; case Reg::Rdi: return "%dil";
+    case Reg::Rbp: return "%bpl"; case Reg::Rsp: return "%spl";
+    case Reg::R8: return "%r8b";  case Reg::R9: return "%r9b";
+    case Reg::R10: return "%r10b"; case Reg::R11: return "%r11b";
+    case Reg::R12: return "%r12b"; case Reg::R13: return "%r13b";
+    case Reg::R14: return "%r14b"; case Reg::R15: return "%r15b";
+    }
+    return "%unknown";
+}
+
+std::string cc_name(CC cc) {
+    switch (cc) {
+    case CC::E: return "e";   case CC::NE: return "ne";
+    case CC::L: return "l";   case CC::LE: return "le";
+    case CC::G: return "g";   case CC::GE: return "ge";
+    }
+    return "?";
+}
+
 std::string dump_arg(const Arg &a) {
     if (const auto *imm = std::get_if<Imm>(&a)) {
         return "$" + std::to_string(imm->value);
@@ -43,51 +54,42 @@ std::string dump_arg(const Arg &a) {
     return "var:" + std::get<VarArg>(a).name;
 }
 
-/// @brief Dump a single instruction in AT&T syntax
-/// @ensures result is valid AT&T instruction line
 std::string dump_instr(const Instr &i) {
-    if (const auto *a = std::get_if<Addq>(&i)) {
+    if (const auto *a = std::get_if<Addq>(&i))
         return "    addq " + dump_arg(a->src) + ", " + dump_arg(a->dst);
-    }
-    if (const auto *s = std::get_if<Subq>(&i)) {
+    if (const auto *s = std::get_if<Subq>(&i))
         return "    subq " + dump_arg(s->src) + ", " + dump_arg(s->dst);
-    }
-    if (const auto *m = std::get_if<Movq>(&i)) {
+    if (const auto *m = std::get_if<Movq>(&i))
         return "    movq " + dump_arg(m->src) + ", " + dump_arg(m->dst);
-    }
-    if (const auto *n = std::get_if<Negq>(&i)) {
+    if (const auto *n = std::get_if<Negq>(&i))
         return "    negq " + dump_arg(n->dst);
-    }
-    if (const auto *p = std::get_if<Pushq>(&i)) {
+    if (const auto *x = std::get_if<Xorq>(&i))
+        return "    xorq " + dump_arg(x->src) + ", " + dump_arg(x->dst);
+    if (const auto *c = std::get_if<Cmpq>(&i))
+        return "    cmpq " + dump_arg(c->src) + ", " + dump_arg(c->dst);
+    if (const auto *sc = std::get_if<SetCC>(&i))
+        return "    set" + cc_name(sc->cc) + " " + dump_arg(sc->dst);
+    if (const auto *mz = std::get_if<Movzbq>(&i))
+        return "    movzbq " + dump_arg(mz->src) + ", " + dump_arg(mz->dst);
+    if (const auto *p = std::get_if<Pushq>(&i))
         return "    pushq " + dump_arg(p->src);
-    }
-    if (const auto *p = std::get_if<Popq>(&i)) {
+    if (const auto *p = std::get_if<Popq>(&i))
         return "    popq " + dump_arg(p->dst);
-    }
-    if (const auto *c = std::get_if<Callq>(&i)) {
+    if (const auto *c = std::get_if<Callq>(&i))
         return "    callq " + c->label;
-    }
-    if (std::holds_alternative<Retq>(i)) {
+    if (std::holds_alternative<Retq>(i))
         return "    retq";
-    }
+    if (const auto *j = std::get_if<JmpIf>(&i))
+        return "    j" + cc_name(j->cc) + " " + j->label;
     return "    jmp " + std::get<Jmp>(i).label;
 }
 
-/// @brief Dump entire X86Program in AT&T syntax
-/// @ensures result contains all blocks as label: instrs
 std::string X86Program::dump() const {
     std::string result;
-
-    // invariant: result accumulates all processed blocks
-    // decreases: blocks.end() - it
     for (auto it = blocks.begin(); it != blocks.end(); ++it) {
         result += it->first + ":\n";
-        const auto &blk = it->second;
-
-        // invariant: instrs[0..j) dumped
-        // decreases: blk.instrs.size() - j
-        for (size_t j = 0; j < blk.instrs.size(); ++j) {
-            result += dump_instr(blk.instrs[j]) + "\n";
+        for (size_t j = 0; j < it->second.instrs.size(); ++j) {
+            result += dump_instr(it->second.instrs[j]) + "\n";
         }
     }
     return result;

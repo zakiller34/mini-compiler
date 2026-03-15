@@ -6,3 +6,5 @@ import MiniCompiler.Passes.SelectInstructions
 import MiniCompiler.Passes.Liveness
 import MiniCompiler.Passes.Interference
 import MiniCompiler.Passes.GraphColoring
+import MiniCompiler.Passes.TypeChecker
+import MiniCompiler.Passes.Shrink

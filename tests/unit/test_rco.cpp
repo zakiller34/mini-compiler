@@ -6,6 +6,7 @@
 #include "ast.h"
 #include "passes/rco.h"
 #include "passes/uniquify.h"
+#include "passes/shrink.h"
 
 /// Check whether an expression is atomic (IntExpr or VarExpr).
 static bool is_atomic(const Expr *e) {
@@ -46,7 +47,7 @@ static bool check_all_atomic(const Expr *root) {
 /// Helper: uniquify then RCO.
 static std::unique_ptr<Program> run_rco(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
-  auto u = uniquify(prog);
+  auto s0__ = shrink(prog); auto u = uniquify(*s0__);
   return remove_complex_operands(*u);
 }
 

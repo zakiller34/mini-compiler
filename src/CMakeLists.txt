@@ -1,13 +1,15 @@
-# src/CMakeLists.txt — Phase 2: L_Var compiler + register allocation
+# src/CMakeLists.txt — Phase 3: L_If compiler
 
 # Static library with all compiler logic
 add_library(mc_lib STATIC
     ast.cpp
     lexer.cpp
     parser.cpp
+    type_checker.cpp
     ir/c_ir.cpp
     ir/x86_ir.cpp
     interpreter.cpp
+    passes/shrink.cpp
     passes/uniquify.cpp
     passes/rco.cpp
     passes/explicate_control.cpp

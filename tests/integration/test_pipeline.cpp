@@ -14,11 +14,12 @@
 #include "passes/rco.h"
 #include "passes/select_instructions.h"
 #include "passes/uniquify.h"
+#include "passes/shrink.h"
 
 /// Run full pipeline: AST -> assembly string.
 static std::string run_pipeline(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
-  auto u = uniquify(prog);
+  auto s0__ = shrink(prog); auto u = uniquify(*s0__);
   auto r = remove_complex_operands(*u);
   auto c = explicate_control(*r);
   auto s = select_instructions(c);
@@ -74,4 +75,103 @@ TEST(Pipeline, HasPreludeConclusion) {
   // Should contain pushq %rbp and retq
   EXPECT_NE(asm_str.find("pushq"), std::string::npos);
   EXPECT_NE(asm_str.find("retq"), std::string::npos);
+}
+
+// ---- Phase 3: end-to-end boolean/conditional tests ----
+
+TEST(Pipeline, SimpleIf) {
+  // if (1 < 2) { 42 } else { 0 }
+  auto e = std::make_unique<IfExpr>(
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Lt,
+          std::make_unique<IntExpr>(1),
+          std::make_unique<IntExpr>(2)),
+      std::make_unique<IntExpr>(42),
+      std::make_unique<IntExpr>(0));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+  EXPECT_NE(asm_str.find("main"), std::string::npos);
+}
+
+TEST(Pipeline, BoolLiteral) {
+  // if (true) { 42 } else { 0 }
+  auto e = std::make_unique<IfExpr>(
+      std::make_unique<BoolExpr>(true),
+      std::make_unique<IntExpr>(42),
+      std::make_unique<IntExpr>(0));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
+}
+
+TEST(Pipeline, NotExpr) {
+  // if (not true) { 0 } else { 42 }
+  // not in condition is compiled by swapping branches, no xorq
+  auto e = std::make_unique<IfExpr>(
+      std::make_unique<UnaryExpr>(
+          UnaryOp::Not, std::make_unique<BoolExpr>(true)),
+      std::make_unique<IntExpr>(0),
+      std::make_unique<IntExpr>(42));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("main"), std::string::npos);
+}
+
+TEST(Pipeline, LetCmp) {
+  // let x = 10; let y = 20; if (x < y) { y - x } else { x - y }
+  auto e = std::make_unique<LetExpr>(
+      "x",
+      std::make_unique<IntExpr>(10),
+      std::make_unique<LetExpr>(
+          "y",
+          std::make_unique<IntExpr>(20),
+          std::make_unique<IfExpr>(
+              std::make_unique<BinaryExpr>(
+                  BinaryOp::Lt,
+                  std::make_unique<VarExpr>("x"),
+                  std::make_unique<VarExpr>("y")),
+              std::make_unique<BinaryExpr>(
+                  BinaryOp::Sub,
+                  std::make_unique<VarExpr>("y"),
+                  std::make_unique<VarExpr>("x")),
+              std::make_unique<BinaryExpr>(
+                  BinaryOp::Sub,
+                  std::make_unique<VarExpr>("x"),
+                  std::make_unique<VarExpr>("y")))));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+  EXPECT_NE(asm_str.find("subq"), std::string::npos);
+}
+
+TEST(Pipeline, EqComparison) {
+  // if (1 == 1) { 42 } else { 0 }
+  auto e = std::make_unique<IfExpr>(
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Eq,
+          std::make_unique<IntExpr>(1),
+          std::make_unique<IntExpr>(1)),
+      std::make_unique<IntExpr>(42),
+      std::make_unique<IntExpr>(0));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+}
+
+TEST(Pipeline, NestedIf) {
+  // if (5 >= 3) { if (3 <= 5) { 42 } else { 0 } } else { 0 }
+  auto inner = std::make_unique<IfExpr>(
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Le,
+          std::make_unique<IntExpr>(3),
+          std::make_unique<IntExpr>(5)),
+      std::make_unique<IntExpr>(42),
+      std::make_unique<IntExpr>(0));
+  auto e = std::make_unique<IfExpr>(
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Ge,
+          std::make_unique<IntExpr>(5),
+          std::make_unique<IntExpr>(3)),
+      std::move(inner),
+      std::make_unique<IntExpr>(0));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
 }

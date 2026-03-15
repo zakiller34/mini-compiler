@@ -2,10 +2,12 @@
 
 #include "ast.h"
 
-#include <cstdint>
 #include <istream>
+#include <variant>
 
-/// @brief Interpret program, return final int64 result
+using Value = std::variant<int64_t, bool>;
+
+/// @brief Interpret program using explicit stack (no recursion)
 /// @requires prog.body != nullptr
-/// @ensures result == semantics of prog under input stream in
-int64_t interpret(const Program &prog, std::istream &in);
+/// @ensures result == semantics of prog
+Value interpret(const Program &prog, std::istream &in);

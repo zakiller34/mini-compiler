@@ -6,6 +6,7 @@ allowed-tools: [Read, Glob, Grep, Bash, Agent, LSP]
 ## Context
 
 You are reviewing the most recent work done on the mini-compiler project.
+Ask unresolved questions at the end. Make no assumptions and ask.
 
 ### Recent changes
 - Recent commits: !`git log --oneline -5 2>/dev/null || echo "(no commits)"`
@@ -79,3 +80,4 @@ After all agents complete, produce a single consolidated report:
 ```
 
 Be extremely concise. No fluff. Just findings and fixes.
+Ask unresolved questions at the end. Make no assumptions and ask.

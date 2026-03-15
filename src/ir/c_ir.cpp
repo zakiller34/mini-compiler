@@ -4,17 +4,27 @@
 
 namespace cir {
 
-/// @brief Dump an Atom as S-expr
-/// @ensures result is "(int N)" or "(var name)"
 std::string dump_atom(const Atom &a) {
     if (const auto *i = std::get_if<IntAtom>(&a)) {
         return std::to_string(i->value);
     }
+    if (const auto *b = std::get_if<BoolAtom>(&a)) {
+        return b->value ? "true" : "false";
+    }
     return std::get<VarAtom>(a).name;
 }
 
-/// @brief Dump a CExpr as S-expr
-/// @ensures result is valid S-expr string
+static const char *cmp_op_name(CCmpOp op) {
+    switch (op) {
+    case CCmpOp::Eq: return "==";
+    case CCmpOp::Lt: return "<";
+    case CCmpOp::Le: return "<=";
+    case CCmpOp::Gt: return ">";
+    case CCmpOp::Ge: return ">=";
+    }
+    return "?";
+}
+
 std::string dump_cexpr(const CExpr &e) {
     if (const auto *ae = std::get_if<AtomExpr>(&e)) {
         return dump_atom(ae->atom);
@@ -23,31 +33,47 @@ std::string dump_cexpr(const CExpr &e) {
         return "(read)";
     }
     if (const auto *ue = std::get_if<CUnaryExpr>(&e)) {
-        return "(- " + dump_atom(ue->operand) + ")";
+        const char *op = (ue->op == CUnaryOp::Neg) ? "-" : "not";
+        return std::string("(") + op + " " + dump_atom(ue->operand) + ")";
     }
-    const auto &be = std::get<CBinaryExpr>(e);
-    std::string op = (be.op == CBinaryOp::Add) ? "+" : "-";
-    return "(" + op + " " + dump_atom(be.lhs) + " " + dump_atom(be.rhs) + ")";
+    if (const auto *be = std::get_if<CBinaryExpr>(&e)) {
+        const char *op = (be->op == CBinaryOp::Add) ? "+" : "-";
+        return std::string("(") + op + " " + dump_atom(be->lhs) + " " +
+               dump_atom(be->rhs) + ")";
+    }
+    if (const auto *ce = std::get_if<CCmpExpr>(&e)) {
+        return std::string("(") + cmp_op_name(ce->op) + " " +
+               dump_atom(ce->lhs) + " " + dump_atom(ce->rhs) + ")";
+    }
+    if (const auto *ne = std::get_if<CNotExpr>(&e)) {
+        return "(not " + dump_atom(ne->operand) + ")";
+    }
+    return "?";
 }
 
-/// @brief Dump entire CProgram as S-expr
-/// @ensures result shows all blocks with assignments and returns
+std::string dump_tail(const Tail &t) {
+    if (const auto *r = std::get_if<Return>(&t)) {
+        return "(return " + dump_cexpr(r->expr) + ")";
+    }
+    if (const auto *g = std::get_if<Goto>(&t)) {
+        return "(goto " + g->label + ")";
+    }
+    const auto &is = std::get<IfStmt>(t);
+    return std::string("(if (") + cmp_op_name(is.op) + " " +
+           dump_atom(is.lhs) + " " + dump_atom(is.rhs) + ") (goto " +
+           is.then_label + ") (goto " + is.else_label + "))";
+}
+
 std::string CProgram::dump() const {
     std::string result = "(c-program\n";
-
-    // invariant: result accumulates all processed blocks
-    // decreases: blocks.end() - it
     for (auto it = blocks.begin(); it != blocks.end(); ++it) {
         result += "  (" + it->first + "\n";
         const auto &blk = it->second;
-
-        // invariant: all stmts[0..i) are dumped
-        // decreases: stmts.size() - i
         for (size_t i = 0; i < blk.stmts.size(); ++i) {
-            result +=
-                "    (assign " + blk.stmts[i].var + " " + dump_cexpr(blk.stmts[i].expr) + ")\n";
+            result += "    (assign " + blk.stmts[i].var + " " +
+                      dump_cexpr(blk.stmts[i].expr) + ")\n";
         }
-        result += "    (return " + dump_cexpr(blk.ret) + "))\n";
+        result += "    " + dump_tail(blk.tail) + ")\n";
     }
     result += ")";
     return result;

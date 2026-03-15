@@ -4,19 +4,30 @@
 
 namespace {
 
-/// @brief Convert CIR Atom to x86 Arg
-/// @ensures result is Imm or VarArg
 x86::Arg atom_to_arg(const cir::Atom &a) {
     if (const auto *i = std::get_if<cir::IntAtom>(&a)) {
         return x86::Imm{i->value};
     }
+    if (const auto *b = std::get_if<cir::BoolAtom>(&a)) {
+        return x86::Imm{b->value ? 1 : 0};
+    }
     return x86::VarArg{std::get<cir::VarAtom>(a).name};
 }
 
+x86::CC cmp_to_cc(cir::CCmpOp op) {
+    switch (op) {
+    case cir::CCmpOp::Eq: return x86::CC::E;
+    case cir::CCmpOp::Lt: return x86::CC::L;
+    case cir::CCmpOp::Le: return x86::CC::LE;
+    case cir::CCmpOp::Gt: return x86::CC::G;
+    case cir::CCmpOp::Ge: return x86::CC::GE;
+    }
+    return x86::CC::E;
+}
+
 /// @brief Emit instructions for CExpr, storing result in dst
-/// @requires dst is valid x86::Arg
-/// @ensures instrs has instructions that compute expr into dst
-void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst, std::vector<x86::Instr> &instrs) {
+void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
+                std::vector<x86::Instr> &instrs) {
     if (const auto *ae = std::get_if<cir::AtomExpr>(&expr)) {
         instrs.push_back(x86::Movq{atom_to_arg(ae->atom), dst});
     } else if (std::holds_alternative<cir::CReadExpr>(expr)) {
@@ -33,39 +44,48 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst, std::vector<x86::In
         } else {
             instrs.push_back(x86::Subq{rhs_arg, dst});
         }
+    } else if (const auto *ce = std::get_if<cir::CCmpExpr>(&expr)) {
+        // cmpq rhs, lhs; setCC %al; movzbq %al, dst
+        instrs.push_back(x86::Cmpq{atom_to_arg(ce->rhs),
+                                     atom_to_arg(ce->lhs)});
+        x86::Arg al = x86::RegArg{x86::Reg::Rax};
+        instrs.push_back(x86::SetCC{cmp_to_cc(ce->op), al});
+        instrs.push_back(x86::Movzbq{al, dst});
+    } else if (const auto *ne = std::get_if<cir::CNotExpr>(&expr)) {
+        instrs.push_back(x86::Movq{atom_to_arg(ne->operand), dst});
+        instrs.push_back(x86::Xorq{x86::Imm{1}, dst});
     }
 }
 
-/// @brief Select instructions for a single basic block
-/// @requires blk has valid stmts and ret
-/// @ensures result block has x86 instructions
+/// @brief Emit instructions for a Tail
+void emit_tail(const cir::Tail &tail, std::vector<x86::Instr> &instrs) {
+    if (const auto *r = std::get_if<cir::Return>(&tail)) {
+        emit_cexpr(r->expr, x86::RegArg{x86::Reg::Rax}, instrs);
+        instrs.push_back(x86::Jmp{"conclusion"});
+    } else if (const auto *g = std::get_if<cir::Goto>(&tail)) {
+        instrs.push_back(x86::Jmp{g->label});
+    } else if (const auto *is = std::get_if<cir::IfStmt>(&tail)) {
+        instrs.push_back(x86::Cmpq{atom_to_arg(is->rhs),
+                                     atom_to_arg(is->lhs)});
+        instrs.push_back(x86::JmpIf{cmp_to_cc(is->op), is->then_label});
+        instrs.push_back(x86::Jmp{is->else_label});
+    }
+}
+
 x86::Block select_block(const cir::BasicBlock &blk) {
     std::vector<x86::Instr> instrs;
-
-    // invariant: instrs has instructions for stmts[0..i)
-    // decreases: blk.stmts.size() - i
     for (size_t i = 0; i < blk.stmts.size(); ++i) {
         x86::Arg dst = x86::VarArg{blk.stmts[i].var};
         emit_cexpr(blk.stmts[i].expr, dst, instrs);
     }
-
-    // Return: move result to %rax, jump to conclusion
-    emit_cexpr(blk.ret, x86::RegArg{x86::Reg::Rax}, instrs);
-    instrs.push_back(x86::Jmp{"conclusion"});
-
+    emit_tail(blk.tail, instrs);
     return x86::Block{std::move(instrs)};
 }
 
 } // namespace
 
-/// @brief Select x86 instructions from C_Var IR
-/// @requires prog has valid blocks
-/// @ensures result has pseudo-x86 blocks
 x86::X86Program select_instructions(const cir::CProgram &prog) {
     x86::X86Program result;
-
-    // invariant: result.blocks has all processed CIR blocks
-    // decreases: prog.blocks.end() - it
     for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
         result.blocks[it->first] = select_block(it->second);
     }

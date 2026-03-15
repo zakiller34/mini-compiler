@@ -14,11 +14,32 @@ struct Task {
   std::string text;
 };
 
+/// @brief Get S-expr name for a unary op
+const char *unary_op_name(UnaryOp op) {
+    return (op == UnaryOp::Neg) ? "-" : "not";
+}
+
+/// @brief Get S-expr name for a binary op
+const char *binary_op_name(BinaryOp op) {
+    switch (op) {
+    case BinaryOp::Add: return "+";
+    case BinaryOp::Sub: return "-";
+    case BinaryOp::And: return "and";
+    case BinaryOp::Or: return "or";
+    case BinaryOp::Eq: return "==";
+    case BinaryOp::Lt: return "<";
+    case BinaryOp::Le: return "<=";
+    case BinaryOp::Gt: return ">";
+    case BinaryOp::Ge: return ">=";
+    }
+    return "?";
+}
+
 /// @brief Push tasks for unary expression
 /// @requires ue != nullptr, ue->operand != nullptr
 void push_unary(const UnaryExpr *ue, std::string &out,
                 std::vector<Task> &tasks) {
-  out += "(- ";
+  out += std::string("(") + unary_op_name(ue->op) + " ";
   tasks.push_back({Action::Append, nullptr, ")"});
   tasks.push_back({Action::Visit, ue->operand.get(), ""});
 }
@@ -27,11 +48,24 @@ void push_unary(const UnaryExpr *ue, std::string &out,
 /// @requires be != nullptr, be->lhs/rhs != nullptr
 void push_binary(const BinaryExpr *be, std::string &out,
                  std::vector<Task> &tasks) {
-  out += (be->op == BinaryOp::Add) ? "(+ " : "(- ";
+  out += std::string("(") + binary_op_name(be->op) + " ";
   tasks.push_back({Action::Append, nullptr, ")"});
   tasks.push_back({Action::Visit, be->rhs.get(), ""});
   tasks.push_back({Action::Append, nullptr, " "});
   tasks.push_back({Action::Visit, be->lhs.get(), ""});
+}
+
+/// @brief Push tasks for if expression
+/// @requires ie != nullptr
+void push_if(const IfExpr *ie, std::string &out,
+             std::vector<Task> &tasks) {
+  out += "(if ";
+  tasks.push_back({Action::Append, nullptr, ")"});
+  tasks.push_back({Action::Visit, ie->else_branch.get(), ""});
+  tasks.push_back({Action::Append, nullptr, " "});
+  tasks.push_back({Action::Visit, ie->then_branch.get(), ""});
+  tasks.push_back({Action::Append, nullptr, " "});
+  tasks.push_back({Action::Visit, ie->cond.get(), ""});
 }
 
 /// @brief Push tasks for let expression
@@ -50,14 +84,18 @@ void push_let(const LetExpr *le, std::string &out,
 void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
   if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
     out += std::to_string(ie->value);
+  } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
+    out += be->value ? "true" : "false";
   } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
     out += ve->name;
   } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
     out += "(read)";
   } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
     push_unary(ue, out, tasks);
-  } else if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
-    push_binary(be, out, tasks);
+  } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
+    push_binary(bine, out, tasks);
+  } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+    push_if(ife, out, tasks);
   } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
     push_let(le, out, tasks);
   }
@@ -90,6 +128,8 @@ static std::string dump_iterative(const Expr *root) {
 
 std::string IntExpr::dump() const { return dump_iterative(this); }
 
+std::string BoolExpr::dump() const { return dump_iterative(this); }
+
 std::string VarExpr::dump() const { return dump_iterative(this); }
 
 std::string ReadExpr::dump() const { return dump_iterative(this); }
@@ -97,6 +137,8 @@ std::string ReadExpr::dump() const { return dump_iterative(this); }
 std::string UnaryExpr::dump() const { return dump_iterative(this); }
 
 std::string BinaryExpr::dump() const { return dump_iterative(this); }
+
+std::string IfExpr::dump() const { return dump_iterative(this); }
 
 std::string LetExpr::dump() const { return dump_iterative(this); }
 

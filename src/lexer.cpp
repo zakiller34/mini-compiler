@@ -43,14 +43,27 @@ Token Lexer::next() {
         return {TokenKind::Eof, "", 0};
     }
 
-    // Single-char tokens
+    // Multi-char and single-char tokens
     switch (cur_) {
     case '+': advance(); return {TokenKind::Plus, "+", 0};
     case '-': advance(); return {TokenKind::Minus, "-", 0};
     case '(': advance(); return {TokenKind::LParen, "(", 0};
     case ')': advance(); return {TokenKind::RParen, ")", 0};
-    case '=': advance(); return {TokenKind::Equals, "=", 0};
+    case '{': advance(); return {TokenKind::LBrace, "{", 0};
+    case '}': advance(); return {TokenKind::RBrace, "}", 0};
     case ';': advance(); return {TokenKind::Semicolon, ";", 0};
+    case '=':
+        advance();
+        if (cur_ == '=') { advance(); return {TokenKind::EqEq, "==", 0}; }
+        return {TokenKind::Equals, "=", 0};
+    case '<':
+        advance();
+        if (cur_ == '=') { advance(); return {TokenKind::Le, "<=", 0}; }
+        return {TokenKind::Lt, "<", 0};
+    case '>':
+        advance();
+        if (cur_ == '=') { advance(); return {TokenKind::Ge, ">=", 0}; }
+        return {TokenKind::Gt, ">", 0};
     default: break;
     }
 
@@ -75,15 +88,16 @@ Token Lexer::next() {
             id += static_cast<char>(cur_);
             advance();
         }
-        if (id == "let") {
-            return {TokenKind::Let, id, 0};
-        }
-        if (id == "read") {
-            return {TokenKind::Read, id, 0};
-        }
-        if (id == "in") {
-            return {TokenKind::In, id, 0};
-        }
+        if (id == "let") { return {TokenKind::Let, id, 0}; }
+        if (id == "read") { return {TokenKind::Read, id, 0}; }
+        if (id == "in") { return {TokenKind::In, id, 0}; }
+        if (id == "true") { return {TokenKind::True, id, 0}; }
+        if (id == "false") { return {TokenKind::False, id, 0}; }
+        if (id == "if") { return {TokenKind::If, id, 0}; }
+        if (id == "else") { return {TokenKind::Else, id, 0}; }
+        if (id == "and") { return {TokenKind::And, id, 0}; }
+        if (id == "or") { return {TokenKind::Or, id, 0}; }
+        if (id == "not") { return {TokenKind::Not, id, 0}; }
         return {TokenKind::Ident, id, 0};
     }
 

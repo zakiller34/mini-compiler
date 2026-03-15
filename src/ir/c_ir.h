@@ -8,57 +8,56 @@
 
 namespace cir {
 
-// -- Atoms: values that need no further computation --
+// -- Atoms --
 
-struct IntAtom {
-  int64_t value;
-};
+struct IntAtom { int64_t value; };
+struct BoolAtom { bool value; };
+struct VarAtom { std::string name; };
 
-struct VarAtom {
-  std::string name;
-};
-
-using Atom = std::variant<IntAtom, VarAtom>;
+using Atom = std::variant<IntAtom, BoolAtom, VarAtom>;
 
 // -- C_Var expressions --
 
-enum class CUnaryOp { Neg };
+enum class CUnaryOp { Neg, Not };
 enum class CBinaryOp { Add, Sub };
+enum class CCmpOp { Eq, Lt, Le, Gt, Ge };
 
-struct AtomExpr {
-  Atom atom;
-};
-
+struct AtomExpr { Atom atom; };
 struct CReadExpr {};
+struct CUnaryExpr { CUnaryOp op; Atom operand; };
+struct CBinaryExpr { CBinaryOp op; Atom lhs; Atom rhs; };
+struct CCmpExpr { CCmpOp op; Atom lhs; Atom rhs; };
+struct CNotExpr { Atom operand; };
 
-struct CUnaryExpr {
-  CUnaryOp op;
-  Atom operand;
-};
-
-struct CBinaryExpr {
-  CBinaryOp op;
-  Atom lhs;
-  Atom rhs;
-};
-
-using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr>;
+using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr,
+                           CCmpExpr, CNotExpr>;
 
 // -- Statements --
 
-struct Assign {
-  std::string var;
-  CExpr expr;
+struct Assign { std::string var; CExpr expr; };
+
+// -- Tails (block terminators) --
+
+struct Return { CExpr expr; };
+struct Goto { std::string label; };
+struct IfStmt {
+    CCmpOp op;
+    Atom lhs;
+    Atom rhs;
+    std::string then_label;
+    std::string else_label;
 };
 
-// -- Basic block: sequence of assignments ending in a return --
+using Tail = std::variant<Return, Goto, IfStmt>;
+
+// -- Basic block --
 
 struct BasicBlock {
   std::vector<Assign> stmts;
-  CExpr ret;
+  Tail tail;
 };
 
-// -- C_Var program: map of labels to basic blocks --
+// -- C_Var program --
 
 struct CProgram {
   std::map<std::string, BasicBlock> blocks;
@@ -67,5 +66,6 @@ struct CProgram {
 
 std::string dump_atom(const Atom &a);
 std::string dump_cexpr(const CExpr &e);
+std::string dump_tail(const Tail &t);
 
 } // namespace cir

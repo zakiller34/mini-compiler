@@ -4,40 +4,42 @@
 
 namespace {
 
-/// @brief Check if an Arg is a memory reference (Deref)
-/// @ensures result == true iff a is Deref
 bool is_mem(const x86::Arg &a) { return std::holds_alternative<x86::Deref>(a); }
 
-/// @brief Check if two Args are identical
-/// @ensures result == true iff a and b represent same operand
 bool args_equal(const x86::Arg &a, const x86::Arg &b) {
     if (const auto *da = std::get_if<x86::Deref>(&a)) {
-        if (const auto *db = std::get_if<x86::Deref>(&b)) {
+        if (const auto *db = std::get_if<x86::Deref>(&b))
             return da->reg == db->reg && da->offset == db->offset;
-        }
     }
     if (const auto *ra = std::get_if<x86::RegArg>(&a)) {
-        if (const auto *rb = std::get_if<x86::RegArg>(&b)) {
+        if (const auto *rb = std::get_if<x86::RegArg>(&b))
             return ra->reg == rb->reg;
-        }
     }
     if (const auto *ia = std::get_if<x86::Imm>(&a)) {
-        if (const auto *ib = std::get_if<x86::Imm>(&b)) {
+        if (const auto *ib = std::get_if<x86::Imm>(&b))
             return ia->value == ib->value;
-        }
     }
     return false;
 }
 
-/// @brief Patch a single instruction, appending result(s) to out
-/// @ensures out has patched instruction(s) with no two-mem-operand violations
+/// @brief Fix two-memory-operand for a src,dst instruction pair
+template <typename F>
+void patch_two_arg(const x86::Arg &src, const x86::Arg &dst,
+                   F make_instr, std::vector<x86::Instr> &out) {
+    const x86::Arg rax = x86::RegArg{x86::Reg::Rax};
+    if (is_mem(src) && is_mem(dst)) {
+        out.push_back(x86::Movq{src, rax});
+        out.push_back(make_instr(rax, dst));
+    } else {
+        out.push_back(make_instr(src, dst));
+    }
+}
+
 void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
     const x86::Arg rax = x86::RegArg{x86::Reg::Rax};
 
     if (const auto *m = std::get_if<x86::Movq>(&instr)) {
-        if (args_equal(m->src, m->dst)) {
-            return; // trivial move
-        }
+        if (args_equal(m->src, m->dst)) return;
         if (is_mem(m->src) && is_mem(m->dst)) {
             out.push_back(x86::Movq{m->src, rax});
             out.push_back(x86::Movq{rax, m->dst});
@@ -45,19 +47,30 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
         }
         out.push_back(instr);
     } else if (const auto *a = std::get_if<x86::Addq>(&instr)) {
-        if (is_mem(a->src) && is_mem(a->dst)) {
-            out.push_back(x86::Movq{a->src, rax});
-            out.push_back(x86::Addq{rax, a->dst});
-            return;
-        }
-        out.push_back(instr);
+        patch_two_arg(a->src, a->dst,
+            [](auto s, auto d) { return x86::Instr{x86::Addq{s, d}}; }, out);
     } else if (const auto *s = std::get_if<x86::Subq>(&instr)) {
-        if (is_mem(s->src) && is_mem(s->dst)) {
-            out.push_back(x86::Movq{s->src, rax});
-            out.push_back(x86::Subq{rax, s->dst});
-            return;
+        patch_two_arg(s->src, s->dst,
+            [](auto ss, auto d) { return x86::Instr{x86::Subq{ss, d}}; }, out);
+    } else if (const auto *x = std::get_if<x86::Xorq>(&instr)) {
+        patch_two_arg(x->src, x->dst,
+            [](auto ss, auto d) { return x86::Instr{x86::Xorq{ss, d}}; }, out);
+    } else if (const auto *c = std::get_if<x86::Cmpq>(&instr)) {
+        // cmpq: dst can't be immediate; can't have two memory operands
+        bool dst_imm = std::holds_alternative<x86::Imm>(c->dst);
+        if (dst_imm || (is_mem(c->src) && is_mem(c->dst))) {
+            out.push_back(x86::Movq{c->dst, rax});
+            out.push_back(x86::Cmpq{c->src, rax});
+        } else {
+            out.push_back(instr);
         }
-        out.push_back(instr);
+    } else if (const auto *mz = std::get_if<x86::Movzbq>(&instr)) {
+        if (is_mem(mz->src) && is_mem(mz->dst)) {
+            out.push_back(x86::Movzbq{mz->src, rax});
+            out.push_back(x86::Movq{rax, mz->dst});
+        } else {
+            out.push_back(instr);
+        }
     } else {
         out.push_back(instr);
     }
@@ -65,21 +78,13 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
 
 } // namespace
 
-/// @brief Patch all instructions in program
-/// @requires prog has no VarArg
-/// @ensures no two-memory-operand instructions remain
 x86::X86Program patch_instructions(const x86::X86Program &prog) {
     x86::X86Program result;
     result.stack_space = prog.stack_space;
     result.used_callee_saved = prog.used_callee_saved;
 
-    // invariant: result.blocks has all patched blocks processed so far
-    // decreases: prog.blocks.end() - it
     for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
         std::vector<x86::Instr> patched;
-
-        // invariant: patched has instructions for instrs[0..j)
-        // decreases: it->second.instrs.size() - j
         for (size_t j = 0; j < it->second.instrs.size(); ++j) {
             patch_one(it->second.instrs[j], patched);
         }

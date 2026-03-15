@@ -13,6 +13,8 @@ set(TEST_SOURCES
     test_coloring
     test_assign_homes
     test_patch
+    test_type_checker
+    test_shrink
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)

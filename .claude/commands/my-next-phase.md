@@ -6,6 +6,7 @@ allowed-tools: [Read, Glob, Grep, Bash, Agent, EnterPlanMode]
 ## Context
 
 You are planning the next compiler phase for the mini-compiler project.
+Ask unresolved questions at the end. Make no assumptions and ask.
 
 ### Current codebase state
 - Git status: !`git status --short`
@@ -50,4 +51,5 @@ You are planning the next compiler phase for the mini-compiler project.
 
 8. **Verification**: How to verify the phase is complete (tests to run, lint check, lean build).
 
-Keep the plan extremely concise. Sacrifice grammar for concision. Ask unresolved questions at the end.
+Keep the plan extremely concise. Sacrifice grammar for concision. 
+Ask unresolved questions at the end. Make no assumptions and ask.

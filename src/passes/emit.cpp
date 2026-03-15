@@ -1,61 +1,60 @@
 #include "emit.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
 namespace {
 
-/// @brief Emit a single Arg in AT&T syntax
-/// @ensures result is valid AT&T operand
 std::string emit_arg(const x86::Arg &a) {
-    if (const auto *imm = std::get_if<x86::Imm>(&a)) {
+    if (const auto *imm = std::get_if<x86::Imm>(&a))
         return "$" + std::to_string(imm->value);
-    }
-    if (const auto *reg = std::get_if<x86::RegArg>(&a)) {
+    if (const auto *reg = std::get_if<x86::RegArg>(&a))
         return x86::reg_name(reg->reg);
-    }
-    if (const auto *deref = std::get_if<x86::Deref>(&a)) {
+    if (const auto *deref = std::get_if<x86::Deref>(&a))
         return std::to_string(deref->offset) + "(" + x86::reg_name(deref->reg) + ")";
-    }
     return "var:" + std::get<x86::VarArg>(a).name;
 }
 
-/// @brief Emit a single instruction as assembly text line
-/// @ensures result is valid AT&T instruction
+/// @brief Emit arg as byte register (for setCC/movzbq src)
+std::string emit_byte_arg(const x86::Arg &a) {
+    if (const auto *reg = std::get_if<x86::RegArg>(&a))
+        return x86::byte_reg_name(reg->reg);
+    return emit_arg(a); // fallback for non-reg
+}
+
 std::string emit_instr(const x86::Instr &i) {
-    if (const auto *a = std::get_if<x86::Addq>(&i)) {
+    if (const auto *a = std::get_if<x86::Addq>(&i))
         return "    addq " + emit_arg(a->src) + ", " + emit_arg(a->dst);
-    }
-    if (const auto *s = std::get_if<x86::Subq>(&i)) {
+    if (const auto *s = std::get_if<x86::Subq>(&i))
         return "    subq " + emit_arg(s->src) + ", " + emit_arg(s->dst);
-    }
-    if (const auto *m = std::get_if<x86::Movq>(&i)) {
+    if (const auto *m = std::get_if<x86::Movq>(&i))
         return "    movq " + emit_arg(m->src) + ", " + emit_arg(m->dst);
-    }
-    if (const auto *n = std::get_if<x86::Negq>(&i)) {
+    if (const auto *n = std::get_if<x86::Negq>(&i))
         return "    negq " + emit_arg(n->dst);
-    }
-    if (const auto *p = std::get_if<x86::Pushq>(&i)) {
+    if (const auto *x = std::get_if<x86::Xorq>(&i))
+        return "    xorq " + emit_arg(x->src) + ", " + emit_arg(x->dst);
+    if (const auto *c = std::get_if<x86::Cmpq>(&i))
+        return "    cmpq " + emit_arg(c->src) + ", " + emit_arg(c->dst);
+    if (const auto *sc = std::get_if<x86::SetCC>(&i))
+        return "    set" + x86::cc_name(sc->cc) + " " + emit_byte_arg(sc->dst);
+    if (const auto *mz = std::get_if<x86::Movzbq>(&i))
+        return "    movzbq " + emit_byte_arg(mz->src) + ", " + emit_arg(mz->dst);
+    if (const auto *p = std::get_if<x86::Pushq>(&i))
         return "    pushq " + emit_arg(p->src);
-    }
-    if (const auto *p = std::get_if<x86::Popq>(&i)) {
+    if (const auto *p = std::get_if<x86::Popq>(&i))
         return "    popq " + emit_arg(p->dst);
-    }
-    if (const auto *c = std::get_if<x86::Callq>(&i)) {
+    if (const auto *c = std::get_if<x86::Callq>(&i))
         return "    callq " + c->label;
-    }
-    if (std::holds_alternative<x86::Retq>(i)) {
+    if (std::holds_alternative<x86::Retq>(i))
         return "    retq";
-    }
+    if (const auto *j = std::get_if<x86::JmpIf>(&i))
+        return "    j" + x86::cc_name(j->cc) + " " + j->label;
     return "    jmp " + std::get<x86::Jmp>(i).label;
 }
 
-/// @brief Emit a labeled block
-/// @ensures result is "label:\n    instr\n..."
 std::string emit_block(const std::string &label, const x86::Block &blk) {
     std::string result = label + ":\n";
-    // invariant: result has instructions[0..i) emitted
-    // decreases: blk.instrs.size() - i
     for (size_t i = 0; i < blk.instrs.size(); ++i) {
         result += emit_instr(blk.instrs[i]) + "\n";
     }
@@ -64,22 +63,34 @@ std::string emit_block(const std::string &label, const x86::Block &blk) {
 
 } // namespace
 
-/// @brief Emit full assembly: .globl main, then main/start/conclusion blocks
-/// @requires prog has "main", "start", "conclusion" blocks
+/// @brief Emit full assembly
+/// @requires prog has "main" and "conclusion" blocks
 /// @ensures result is complete x86-64 AT&T assembly
 std::string emit(const x86::X86Program &prog) {
     std::string result = "    .globl main\n";
 
-    // Emit in fixed order: main, start, conclusion
-    std::vector<std::string> order = {"main", "start", "conclusion"};
+    // Emit main first
+    auto it = prog.blocks.find("main");
+    if (it != prog.blocks.end()) {
+        result += emit_block("main", it->second);
+    }
 
-    // invariant: result has blocks order[0..i) emitted
-    // decreases: order.size() - i
-    for (size_t i = 0; i < order.size(); ++i) {
-        auto it = prog.blocks.find(order[i]);
-        if (it != prog.blocks.end()) {
-            result += emit_block(it->first, it->second);
+    // Emit all other blocks (sorted) except main and conclusion
+    std::vector<std::string> labels;
+    for (const auto &[label, blk] : prog.blocks) {
+        if (label != "main" && label != "conclusion") {
+            labels.push_back(label);
         }
+    }
+    std::sort(labels.begin(), labels.end());
+    for (const auto &label : labels) {
+        result += emit_block(label, prog.blocks.at(label));
+    }
+
+    // Emit conclusion last
+    it = prog.blocks.find("conclusion");
+    if (it != prog.blocks.end()) {
+        result += emit_block("conclusion", it->second);
     }
     return result;
 }

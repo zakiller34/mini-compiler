@@ -7,12 +7,22 @@
 #include "ast.h"
 #include "interpreter.h"
 
-/// Helper: interpret program with given stdin string.
+/// Helper: interpret program, extract int64_t result.
 static int64_t run(std::unique_ptr<Expr> body,
                    const std::string &input = "") {
   std::istringstream in(input);
   Program prog(std::move(body));
-  return interpret(prog, in);
+  Value result = interpret(prog, in);
+  return std::get<int64_t>(result);
+}
+
+/// Helper: interpret program, extract bool result.
+static bool run_bool(std::unique_ptr<Expr> body,
+                     const std::string &input = "") {
+  std::istringstream in(input);
+  Program prog(std::move(body));
+  Value result = interpret(prog, in);
+  return std::get<bool>(result);
 }
 
 TEST(Interpreter, IntLiteral) {
