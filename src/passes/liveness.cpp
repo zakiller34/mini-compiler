@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <map>
+#include <queue>
 
 namespace {
 
@@ -59,12 +60,15 @@ std::set<std::string> instr_writes(const x86::Instr &instr) {
     return result;
 }
 
+/// @brief Single-block liveness (backward pass, no CFG context)
 std::vector<std::set<std::string>>
 analyze_liveness(const x86::Block &block) {
     auto n = block.instrs.size();
     std::vector<std::set<std::string>> live_after(n);
     if (n == 0) return live_after;
 
+    // decreases: i
+    // invariant: live_after[i] correct for all i > current
     for (auto i = static_cast<int64_t>(n) - 1; i >= 0; --i) {
         auto idx = static_cast<size_t>(i);
         auto w = instr_writes(block.instrs[idx]);
@@ -82,8 +86,11 @@ static std::vector<std::string> block_successors(const x86::Block &blk) {
     std::vector<std::string> succs;
     if (blk.instrs.empty()) return succs;
     // Check last 1-2 instructions for jumps
-    for (size_t i = blk.instrs.size(); i > 0 && i > blk.instrs.size() - 2; --i) {
-        const auto &instr = blk.instrs[i - 1];
+    // invariant: succs has all jump targets from checked instructions
+    size_t n = blk.instrs.size();
+    size_t start = (n >= 2) ? n - 2 : 0;
+    for (size_t i = start; i < n; ++i) {
+        const auto &instr = blk.instrs[i];
         if (const auto *j = std::get_if<x86::Jmp>(&instr)) {
             succs.push_back(j->label);
         } else if (const auto *jc = std::get_if<x86::JmpIf>(&instr)) {
@@ -93,72 +100,96 @@ static std::vector<std::string> block_successors(const x86::Block &blk) {
     return succs;
 }
 
-/// @brief Compute live_before for a block (live set at block entry)
-static std::set<std::string>
-block_live_before(const x86::Block &blk,
-                  const std::vector<std::set<std::string>> &live_after) {
-    if (blk.instrs.empty()) return {};
-    auto w = instr_writes(blk.instrs[0]);
-    auto r = instr_reads(blk.instrs[0]);
-    std::set<std::string> lb = live_after[0];
-    for (const auto &v : w) lb.erase(v);
-    for (const auto &v : r) lb.insert(v);
-    return lb;
-}
+/// @brief Backward analysis for a single block given exit_live
+/// @returns live_after vector and live_before (entry) set
+static std::pair<std::vector<std::set<std::string>>, std::set<std::string>>
+block_backward_pass(const x86::Block &blk,
+                    const std::set<std::string> &exit_live) {
+    auto n = blk.instrs.size();
+    std::vector<std::set<std::string>> live_after(n);
+    std::set<std::string> live_before;
+    if (n == 0) return {live_after, live_before};
 
-std::map<std::string, std::vector<std::set<std::string>>>
-analyze_liveness_program(const x86::X86Program &prog) {
-    // Build successor map
-    std::map<std::string, std::vector<std::string>> succ_map;
-    for (const auto &[label, blk] : prog.blocks) {
-        succ_map[label] = block_successors(blk);
-    }
-
-    // Collect all block labels (excluding main/conclusion which are structural)
-    std::vector<std::string> block_order;
-    for (const auto &[label, blk] : prog.blocks) {
-        if (label != "main" && label != "conclusion") {
-            block_order.push_back(label);
+    live_after[n - 1] = exit_live;
+    // decreases: i
+    for (auto i = static_cast<int64_t>(n) - 1; i >= 0; --i) {
+        auto idx = static_cast<size_t>(i);
+        auto w = instr_writes(blk.instrs[idx]);
+        auto r = instr_reads(blk.instrs[idx]);
+        std::set<std::string> lb = live_after[idx];
+        for (const auto &v : w) lb.erase(v);
+        for (const auto &v : r) lb.insert(v);
+        if (i > 0) {
+            live_after[static_cast<size_t>(i - 1)] = lb;
+        } else {
+            live_before = lb;
         }
     }
-    // Sort in reverse alphabetical as approximation of reverse postorder
-    std::sort(block_order.rbegin(), block_order.rend());
+    return {live_after, live_before};
+}
 
-    // Initialize live-after for each block
-    std::map<std::string, std::vector<std::set<std::string>>> result;
+/// @brief Kildall's worklist algorithm for multi-block liveness
+/// @requires prog has valid blocks with Jmp/JmpIf terminators
+/// @ensures result[label][i] = vars live after instruction i; handles cycles
+std::map<std::string, std::vector<std::set<std::string>>>
+analyze_liveness_program(const x86::X86Program &prog) {
+    // Build successor and predecessor maps
+    std::map<std::string, std::vector<std::string>> succ_map;
+    std::map<std::string, std::vector<std::string>> pred_map;
+    std::vector<std::string> block_order;
+
+    // invariant: succ_map/pred_map cover all non-structural blocks
+    for (const auto &[label, blk] : prog.blocks) {
+        if (label == "main" || label == "conclusion") continue;
+        block_order.push_back(label);
+        succ_map[label] = block_successors(blk);
+        for (const auto &succ : succ_map[label]) {
+            pred_map[succ].push_back(label);
+        }
+    }
+
+    // Initialize live_before for all blocks to empty
     std::map<std::string, std::set<std::string>> live_before_map;
+    std::map<std::string, std::vector<std::set<std::string>>> result;
 
-    // Iterate to fixed point (for DAGs, 2 passes suffice)
-    // invariant: live sets converge monotonically
-    for (int pass = 0; pass < 3; ++pass) {
-        for (const auto &label : block_order) {
-            const auto &blk = prog.blocks.at(label);
-            auto n = blk.instrs.size();
-            if (n == 0) continue;
+    // invariant: live_before_map[l] ⊆ true live-before for l
+    for (const auto &label : block_order) {
+        live_before_map[label] = {};
+    }
 
-            // Compute live_after[last] = union of successors' live_before
-            std::set<std::string> exit_live;
-            for (const auto &succ : succ_map[label]) {
-                auto it = live_before_map.find(succ);
-                if (it != live_before_map.end()) {
-                    exit_live.insert(it->second.begin(), it->second.end());
+    // Worklist: all labels initially
+    std::set<std::string> worklist(block_order.begin(), block_order.end());
+
+    // decreases: sum of |live_before[l]| is bounded by #vars × #blocks
+    while (!worklist.empty()) {
+        auto it = worklist.begin();
+        std::string label = *it;
+        worklist.erase(it);
+
+        const auto &blk = prog.blocks.at(label);
+        if (blk.instrs.empty()) continue;
+
+        // Compute exit_live = union of successors' live_before
+        std::set<std::string> exit_live;
+        for (const auto &succ : succ_map[label]) {
+            auto sit = live_before_map.find(succ);
+            if (sit != live_before_map.end()) {
+                exit_live.insert(sit->second.begin(), sit->second.end());
+            }
+        }
+
+        auto [live_after, live_before] = block_backward_pass(blk, exit_live);
+        result[label] = std::move(live_after);
+
+        // If live_before changed, add predecessors to worklist
+        if (live_before != live_before_map[label]) {
+            live_before_map[label] = std::move(live_before);
+            auto pit = pred_map.find(label);
+            if (pit != pred_map.end()) {
+                for (const auto &pred : pit->second) {
+                    worklist.insert(pred);
                 }
             }
-
-            // Run backward analysis with initial exit_live
-            std::vector<std::set<std::string>> live_after(n);
-            live_after[n - 1] = exit_live;
-            for (auto i = static_cast<int64_t>(n) - 1; i >= 0; --i) {
-                auto idx = static_cast<size_t>(i);
-                auto w = instr_writes(blk.instrs[idx]);
-                auto r = instr_reads(blk.instrs[idx]);
-                std::set<std::string> lb = live_after[idx];
-                for (const auto &v : w) lb.erase(v);
-                for (const auto &v : r) lb.insert(v);
-                if (i > 0) live_after[static_cast<size_t>(i - 1)] = lb;
-                if (i == 0) live_before_map[label] = lb;
-            }
-            result[label] = std::move(live_after);
         }
     }
     return result;

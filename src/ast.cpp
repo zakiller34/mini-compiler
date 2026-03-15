@@ -98,6 +98,27 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     push_if(ife, out, tasks);
   } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
     push_let(le, out, tasks);
+  } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+    out += "(while ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, we->body.get(), ""});
+    tasks.push_back({Action::Append, nullptr, " "});
+    tasks.push_back({Action::Visit, we->cond.get(), ""});
+  } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+    out += "(set! " + se->var_name + " ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, se->expr.get(), ""});
+  } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+    out += "(begin";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    for (int i = static_cast<int>(beg->exprs.size()) - 1; i >= 0; --i) {
+      tasks.push_back({Action::Visit, beg->exprs[i].get(), ""});
+      tasks.push_back({Action::Append, nullptr, " "});
+    }
+  } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+    out += "(void)";
+  } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+    out += "(get! " + ge->name + ")";
   }
 }
 
@@ -141,6 +162,16 @@ std::string BinaryExpr::dump() const { return dump_iterative(this); }
 std::string IfExpr::dump() const { return dump_iterative(this); }
 
 std::string LetExpr::dump() const { return dump_iterative(this); }
+
+std::string WhileExpr::dump() const { return dump_iterative(this); }
+
+std::string SetBangExpr::dump() const { return dump_iterative(this); }
+
+std::string BeginExpr::dump() const { return dump_iterative(this); }
+
+std::string VoidExpr::dump() const { return dump_iterative(this); }
+
+std::string GetExpr::dump() const { return dump_iterative(this); }
 
 /// @brief Dump program as S-expr: (program body)
 /// @requires body != nullptr

@@ -5,7 +5,7 @@
 #include <istream>
 #include <variant>
 
-using Value = std::variant<int64_t, bool>;
+using Value = std::variant<int64_t, bool, std::monostate>;
 
 /// @brief Interpret program using explicit stack (no recursion)
 /// @requires prog.body != nullptr

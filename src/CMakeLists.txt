@@ -1,4 +1,4 @@
-# src/CMakeLists.txt — Phase 3: L_If compiler
+# src/CMakeLists.txt — Phase 4: L_While compiler
 
 # Static library with all compiler logic
 add_library(mc_lib STATIC
@@ -11,6 +11,7 @@ add_library(mc_lib STATIC
     interpreter.cpp
     passes/shrink.cpp
     passes/uniquify.cpp
+    passes/uncover_get.cpp
     passes/rco.cpp
     passes/explicate_control.cpp
     passes/select_instructions.cpp

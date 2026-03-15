@@ -167,6 +167,47 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         return std::make_unique<IfExpr>(
             std::move(cond), std::move(then_br), std::move(else_br));
     }
+    case TokenKind::While: {
+        advance();
+        expect(TokenKind::LParen, "'('");
+        auto cond = parse_expr();
+        expect(TokenKind::RParen, "')'");
+        expect(TokenKind::LBrace, "'{'");
+        auto body = parse_expr();
+        expect(TokenKind::RBrace, "'}'");
+        return std::make_unique<WhileExpr>(
+            std::move(cond), std::move(body));
+    }
+    case TokenKind::Begin: {
+        advance();
+        expect(TokenKind::LBrace, "'{'");
+        std::vector<std::unique_ptr<Expr>> exprs;
+        exprs.push_back(parse_expr());
+        // invariant: exprs has all parsed sub-expressions so far
+        // decreases: remaining tokens until '}'
+        while (cur_.kind == TokenKind::Semicolon) {
+            advance();
+            exprs.push_back(parse_expr());
+        }
+        expect(TokenKind::RBrace, "'}'");
+        return std::make_unique<BeginExpr>(std::move(exprs));
+    }
+    case TokenKind::Set: {
+        advance();
+        expect(TokenKind::Bang, "'!'");
+        if (cur_.kind != TokenKind::Ident) {
+            throw ParseError("expected identifier after set!");
+        }
+        std::string name = cur_.text;
+        advance();
+        auto expr = parse_expr();
+        return std::make_unique<SetBangExpr>(
+            std::move(name), std::move(expr));
+    }
+    case TokenKind::Void: {
+        advance();
+        return std::make_unique<VoidExpr>();
+    }
     case TokenKind::LParen: {
         advance();
         auto inner = parse_expr();

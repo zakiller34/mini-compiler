@@ -11,6 +11,7 @@
 #include "passes/rco.h"
 #include "passes/select_instructions.h"
 #include "passes/shrink.h"
+#include "passes/uncover_get.h"
 #include "passes/uniquify.h"
 
 #include <cstring>
@@ -42,7 +43,8 @@ int compile(const std::string &src_file, const std::string &out_file) {
 
     auto p0 = shrink(*prog);
     auto p1 = uniquify(*p0);
-    auto p2 = remove_complex_operands(*p1);
+    auto p1b = uncover_get(*p1);
+    auto p2 = remove_complex_operands(*p1b);
     auto c_prog = explicate_control(*p2);
     auto x1 = select_instructions(c_prog);
     auto x2 = assign_homes(x1);
@@ -74,8 +76,10 @@ int run_interpret(const std::string &src_file,
         Value result = interpret(*prog, in);
         if (auto *i = std::get_if<int64_t>(&result)) {
             std::cout << *i << "\n";
+        } else if (auto *b = std::get_if<bool>(&result)) {
+            std::cout << (*b ? "true" : "false") << "\n";
         } else {
-            std::cout << (std::get<bool>(result) ? "true" : "false") << "\n";
+            std::cout << "(void)" << "\n";
         }
     };
 

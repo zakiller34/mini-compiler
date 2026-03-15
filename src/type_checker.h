@@ -4,7 +4,7 @@
 
 #include <stdexcept>
 
-enum class Type { Int, Bool };
+enum class Type { Int, Bool, Void };
 
 class TypeError : public std::runtime_error {
 public:

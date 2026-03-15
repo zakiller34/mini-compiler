@@ -13,7 +13,7 @@ class ParseError : public std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-/// @brief Hand-written recursive-descent parser for L_If
+/// @brief Hand-written recursive-descent parser for L_While
 /// Grammar:
 ///   program  → expr EOF
 ///   expr     → LET IDENT '=' or_expr ';' expr | or_expr
@@ -24,6 +24,10 @@ class ParseError : public std::runtime_error {
 ///   unary    → NOT unary | '-' unary | primary
 ///   primary  → INT | IDENT | TRUE | FALSE | READ '(' ')'
 ///            | IF '(' expr ')' '{' expr '}' ELSE '{' expr '}'
+///            | WHILE '(' expr ')' '{' expr '}'
+///            | BEGIN '{' expr (';' expr)* '}'
+///            | SET '!' IDENT expr
+///            | VOID
 ///            | '(' expr ')'
 class Parser {
   public:

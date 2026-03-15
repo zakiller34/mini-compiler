@@ -1,5 +1,6 @@
 #include "rco.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <variant>
@@ -18,10 +19,16 @@ struct IfBuildThen { const Expr *else_br; Need need; };
 struct IfBuildElse { Need need; };
 struct LetBuildInit { std::string var; const Expr *body; };
 struct LetBuildBody { std::string var; };
+struct WhileBuildCond { const Expr *body; Need need; };
+struct WhileBuildBody { Need need; };
+struct SetBangBuild { std::string var; Need need; };
+struct BeginBuild { std::vector<const Expr *> remaining; size_t total; Need need; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
-                           LetBuildInit, LetBuildBody>;
+                           LetBuildInit, LetBuildBody,
+                           WhileBuildCond, WhileBuildBody,
+                           SetBangBuild, BeginBuild>;
 
 using Binding = std::pair<std::string, std::unique_ptr<Expr>>;
 
@@ -79,6 +86,34 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get(), Need::Expr});
+    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        // while is complex, never atomized — branches in Need::Expr
+        stack.push_back(WhileBuildCond{we->body.get(), ef.need});
+        stack.push_back(EvalFrame{we->cond.get(), Need::Expr});
+    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        // set! is complex
+        stack.push_back(SetBangBuild{se->var_name, ef.need});
+        stack.push_back(EvalFrame{se->expr.get(), Need::Expr});
+    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        // begin is complex
+        if (beg->exprs.empty()) {
+            results.push_back({std::make_unique<BeginExpr>(
+                std::vector<std::unique_ptr<Expr>>{}), {}});
+        } else {
+            std::vector<const Expr *> remaining;
+            for (size_t i = 1; i < beg->exprs.size(); ++i) {
+                remaining.push_back(beg->exprs[i].get());
+            }
+            stack.push_back(BeginBuild{std::move(remaining),
+                                        beg->exprs.size(), ef.need});
+            stack.push_back(EvalFrame{beg->exprs[0].get(), Need::Expr});
+        }
+    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        // void is atomic
+        results.push_back({std::make_unique<VoidExpr>(), {}});
+    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        // get! is atomic (like VarExpr)
+        results.push_back({std::make_unique<GetExpr>(ge->name), {}});
     }
 }
 
@@ -135,6 +170,45 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         res.expr = std::make_unique<LetExpr>(lb->var, std::move(init_w),
                                               std::move(body_w));
         results.push_back(std::move(res));
+    } else if (auto *wc = std::get_if<WhileBuildCond>(&frame)) {
+        stack.push_back(WhileBuildBody{wc->need});
+        stack.push_back(EvalFrame{wc->body, Need::Expr});
+    } else if (auto *wb = std::get_if<WhileBuildBody>(&frame)) {
+        auto body = std::move(results.back()); results.pop_back();
+        auto cond = std::move(results.back()); results.pop_back();
+        auto cond_w = wrap_bindings(std::move(cond.expr), cond.bindings);
+        auto body_w = wrap_bindings(std::move(body.expr), body.bindings);
+        Result res;
+        res.expr = std::make_unique<WhileExpr>(
+            std::move(cond_w), std::move(body_w));
+        atomize(res, wb->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *sb = std::get_if<SetBangBuild>(&frame)) {
+        auto expr = std::move(results.back()); results.pop_back();
+        auto expr_w = wrap_bindings(std::move(expr.expr), expr.bindings);
+        Result res;
+        res.expr = std::make_unique<SetBangExpr>(sb->var, std::move(expr_w));
+        atomize(res, sb->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *bb = std::get_if<BeginBuild>(&frame)) {
+        if (bb->remaining.empty()) {
+            std::vector<std::unique_ptr<Expr>> exprs;
+            for (size_t i = 0; i < bb->total; ++i) {
+                auto r = std::move(results.back()); results.pop_back();
+                exprs.push_back(wrap_bindings(std::move(r.expr), r.bindings));
+            }
+            std::reverse(exprs.begin(), exprs.end());
+            Result res;
+            res.expr = std::make_unique<BeginExpr>(std::move(exprs));
+            atomize(res, bb->need, tmp_counter);
+            results.push_back(std::move(res));
+        } else {
+            const Expr *next = bb->remaining[0];
+            std::vector<const Expr *> rest(bb->remaining.begin() + 1,
+                                            bb->remaining.end());
+            stack.push_back(BeginBuild{std::move(rest), bb->total, bb->need});
+            stack.push_back(EvalFrame{next, Need::Expr});
+        }
     }
 }
 

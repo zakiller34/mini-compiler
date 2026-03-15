@@ -45,9 +45,28 @@ struct LetBindFrame {
 
 struct LetBodyFrame {};
 
+struct WhileCondFrame {
+    const Expr *body;
+    TypeEnv env;
+};
+
+struct WhileBodyFrame {};
+
+struct SetBangFrame {
+    std::string var;
+    TypeEnv env;
+};
+
+struct BeginFrame {
+    std::vector<const Expr *> remaining;
+    TypeEnv env;
+};
+
 using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            IfCondFrame, IfThenFrame, IfElseFrame,
-                           LetBindFrame, LetBodyFrame>;
+                           LetBindFrame, LetBodyFrame,
+                           WhileCondFrame, WhileBodyFrame,
+                           SetBangFrame, BeginFrame>;
 
 /// @brief Push eval for type checking
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
@@ -80,6 +99,35 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
         stack.push_back(LetBindFrame{le->var, le->body.get(), env});
         stack.push_back(EvalFrame{le->init.get(), env});
+    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        stack.push_back(WhileCondFrame{we->body.get(), env});
+        stack.push_back(EvalFrame{we->cond.get(), env});
+    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        auto it = env.find(se->var_name);
+        if (it == env.end()) {
+            throw TypeError("unbound variable in set!: " + se->var_name);
+        }
+        stack.push_back(SetBangFrame{se->var_name, env});
+        stack.push_back(EvalFrame{se->expr.get(), env});
+    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        if (beg->exprs.empty()) {
+            types.push_back(Type::Void);
+        } else {
+            std::vector<const Expr *> remaining;
+            for (size_t i = 1; i < beg->exprs.size(); ++i) {
+                remaining.push_back(beg->exprs[i].get());
+            }
+            stack.push_back(BeginFrame{std::move(remaining), env});
+            stack.push_back(EvalFrame{beg->exprs[0].get(), env});
+        }
+    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        types.push_back(Type::Void);
+    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        auto it = env.find(ge->name);
+        if (it == env.end()) {
+            throw TypeError("unbound variable: " + ge->name);
+        }
+        types.push_back(it->second);
     }
 }
 
@@ -147,6 +195,35 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{lb->body, std::move(new_env)});
     } else if (std::get_if<LetBodyFrame>(&frame) != nullptr) {
         // body type is already on stack, leave it
+    } else if (auto *wc = std::get_if<WhileCondFrame>(&frame)) {
+        Type cond_t = types.back(); types.pop_back();
+        if (cond_t != Type::Bool)
+            throw TypeError("while condition must be Bool");
+        stack.push_back(WhileBodyFrame{});
+        stack.push_back(EvalFrame{wc->body, wc->env});
+    } else if (std::get_if<WhileBodyFrame>(&frame) != nullptr) {
+        types.pop_back(); // discard body type
+        types.push_back(Type::Void);
+    } else if (auto *sb = std::get_if<SetBangFrame>(&frame)) {
+        Type expr_t = types.back(); types.pop_back();
+        // Check that expr type matches the variable's type
+        // (env was already checked in push_eval)
+        auto it = sb->env.find(sb->var);
+        if (it != sb->env.end() && it->second != expr_t) {
+            throw TypeError("set! type mismatch for " + sb->var);
+        }
+        types.push_back(Type::Void);
+    } else if (auto *bf = std::get_if<BeginFrame>(&frame)) {
+        if (bf->remaining.empty()) {
+            // Last expr type is already on stack, leave it
+        } else {
+            types.pop_back(); // discard non-last expr type
+            const Expr *next = bf->remaining[0];
+            std::vector<const Expr *> rest(bf->remaining.begin() + 1,
+                                            bf->remaining.end());
+            stack.push_back(BeginFrame{std::move(rest), bf->env});
+            stack.push_back(EvalFrame{next, bf->env});
+        }
     }
 }
 

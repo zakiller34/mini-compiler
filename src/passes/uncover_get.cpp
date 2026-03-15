@@ -1,11 +1,56 @@
-#include "shrink.h"
+#include "uncover_get.h"
 
 #include <algorithm>
 #include <memory>
+#include <set>
+#include <string>
 #include <variant>
 #include <vector>
 
 namespace {
+
+/// Phase 1: collect all mutable vars (targets of set!)
+/// @ensures result contains all var names appearing as SetBangExpr targets
+std::set<std::string> collect_mutable_vars(const Expr *root) {
+    std::set<std::string> result;
+    std::vector<const Expr *> worklist;
+    worklist.push_back(root);
+
+    // decreases: worklist.size() + unvisited nodes
+    // invariant: result has set! targets from all visited nodes
+    while (!worklist.empty()) {
+        const Expr *e = worklist.back();
+        worklist.pop_back();
+
+        if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+            result.insert(se->var_name);
+            worklist.push_back(se->expr.get());
+        } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+            worklist.push_back(ue->operand.get());
+        } else if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
+            worklist.push_back(be->lhs.get());
+            worklist.push_back(be->rhs.get());
+        } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+            worklist.push_back(ife->cond.get());
+            worklist.push_back(ife->then_branch.get());
+            worklist.push_back(ife->else_branch.get());
+        } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+            worklist.push_back(le->init.get());
+            worklist.push_back(le->body.get());
+        } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+            worklist.push_back(we->cond.get());
+            worklist.push_back(we->body.get());
+        } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+            for (const auto &sub : beg->exprs) {
+                worklist.push_back(sub.get());
+            }
+        }
+        // IntExpr, BoolExpr, VarExpr, ReadExpr, VoidExpr, GetExpr: no children
+    }
+    return result;
+}
+
+/// Phase 2: replace VarExpr(v) → GetExpr(v) where v in mutable_vars
 
 struct EvalFrame { const Expr *expr; };
 struct UnaryBuild { UnaryOp op; };
@@ -27,7 +72,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            WhileBuildCond, WhileBuildBody,
                            SetBangBuild, BeginBuild>;
 
-void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
+void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
+               std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
     const Expr *e = ef.expr;
     if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
@@ -35,27 +81,19 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
         results.push_back(std::make_unique<BoolExpr>(be->value));
     } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
-        results.push_back(std::make_unique<VarExpr>(ve->name));
+        if (mvars.count(ve->name) != 0U) {
+            results.push_back(std::make_unique<GetExpr>(ve->name));
+        } else {
+            results.push_back(std::make_unique<VarExpr>(ve->name));
+        }
     } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
         results.push_back(std::make_unique<ReadExpr>());
     } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
     } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
-        if (bine->op == BinaryOp::And || bine->op == BinaryOp::Or) {
-            // Desugar: And(a,b) → If(a, b, false)
-            //          Or(a,b)  → If(a, true, b)
-            if (bine->op == BinaryOp::And) {
-                stack.push_back(IfBuildCond{bine->rhs.get(), nullptr});
-                stack.push_back(EvalFrame{bine->lhs.get()});
-            } else {
-                stack.push_back(IfBuildCond{nullptr, bine->rhs.get()});
-                stack.push_back(EvalFrame{bine->lhs.get()});
-            }
-        } else {
-            stack.push_back(BinBuildLhs{bine->op, bine->rhs.get()});
-            stack.push_back(EvalFrame{bine->lhs.get()});
-        }
+        stack.push_back(BinBuildLhs{bine->op, bine->rhs.get()});
+        stack.push_back(EvalFrame{bine->lhs.get()});
     } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get()});
@@ -104,37 +142,11 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         results.push_back(std::make_unique<BinaryExpr>(
             br->op, std::move(lhs), std::move(rhs)));
     } else if (auto *ic = std::get_if<IfBuildCond>(&frame)) {
-        // Cond result on stack. Handle And/Or desugaring:
-        if (ic->then_br == nullptr) {
-            // Or(a, b) → If(cond, true, b) — then_br is nullptr
-            stack.push_back(IfBuildThen{nullptr});
-            // "then" is BoolExpr(true), push directly
-            results.push_back(std::make_unique<BoolExpr>(true));
-            stack.push_back(EvalFrame{ic->else_br});
-        } else if (ic->else_br == nullptr) {
-            // And(a, b) → If(cond, b, false) — else_br is nullptr
-            stack.push_back(IfBuildThen{nullptr});
-            stack.push_back(EvalFrame{ic->then_br});
-        } else {
-            // Normal if
-            stack.push_back(IfBuildThen{ic->else_br});
-            stack.push_back(EvalFrame{ic->then_br});
-        }
+        stack.push_back(IfBuildThen{ic->else_br});
+        stack.push_back(EvalFrame{ic->then_br});
     } else if (auto *it = std::get_if<IfBuildThen>(&frame)) {
-        if (it->else_br == nullptr) {
-            // Desugared And: else is false; Or: else already processed
-            // Check if this is And (then result on stack, need false else)
-            // or Or (true and else both on stack)
-            // For And: then_result on stack, push false
-            // For Or: true on stack below, else_result on top — we're done
-            // Actually: let's just check if there was an else_br to process
-            stack.push_back(IfBuildElse{});
-            // For And: push BoolExpr(false) as else
-            results.push_back(std::make_unique<BoolExpr>(false));
-        } else {
-            stack.push_back(IfBuildElse{});
-            stack.push_back(EvalFrame{it->else_br});
-        }
+        stack.push_back(IfBuildElse{});
+        stack.push_back(EvalFrame{it->else_br});
     } else if (std::get_if<IfBuildElse>(&frame) != nullptr) {
         auto else_r = std::move(results.back()); results.pop_back();
         auto then_r = std::move(results.back()); results.pop_back();
@@ -163,7 +175,6 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             sb->var, std::move(expr)));
     } else if (auto *bb = std::get_if<BeginBuild>(&frame)) {
         if (bb->remaining.empty()) {
-            // All sub-expressions processed; collect from results
             std::vector<std::unique_ptr<Expr>> exprs;
             for (size_t i = 0; i < bb->total; ++i) {
                 exprs.push_back(std::move(results.back()));
@@ -183,7 +194,9 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
-std::unique_ptr<Program> shrink(const Program &prog) {
+std::unique_ptr<Program> uncover_get(const Program &prog) {
+    auto mutable_vars = collect_mutable_vars(prog.body.get());
+
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
     stack.push_back(EvalFrame{prog.body.get()});
@@ -193,7 +206,7 @@ std::unique_ptr<Program> shrink(const Program &prog) {
         auto frame = std::move(stack.back());
         stack.pop_back();
         if (auto *ef = std::get_if<EvalFrame>(&frame)) {
-            push_eval(*ef, stack, results);
+            push_eval(*ef, mutable_vars, stack, results);
         } else {
             process_cont(frame, stack, results);
         }

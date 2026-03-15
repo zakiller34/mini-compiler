@@ -1,5 +1,6 @@
 #include "uniquify.h"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <variant>
@@ -18,10 +19,16 @@ struct IfBuildThen { const Expr *else_br; RenameEnv env; };
 struct IfBuildElse {};
 struct LetBuildInit { std::string old_var; std::string new_var; const Expr *body; RenameEnv env; };
 struct LetBuildBody { std::string new_var; };
+struct WhileBuildCond { const Expr *body; RenameEnv env; };
+struct WhileBuildBody {};
+struct SetBangBuild { std::string var_name; };
+struct BeginBuild { std::vector<const Expr *> remaining; RenameEnv env; size_t total; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
-                           LetBuildInit, LetBuildBody>;
+                           LetBuildInit, LetBuildBody,
+                           WhileBuildCond, WhileBuildBody,
+                           SetBangBuild, BeginBuild>;
 
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results, int &counter) {
@@ -52,6 +59,33 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         std::string new_name = le->var + "." + std::to_string(counter++);
         stack.push_back(LetBuildInit{le->var, new_name, le->body.get(), env});
         stack.push_back(EvalFrame{le->init.get(), env});
+    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        stack.push_back(WhileBuildCond{we->body.get(), env});
+        stack.push_back(EvalFrame{we->cond.get(), env});
+    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        auto it = env.find(se->var_name);
+        std::string name = (it != env.end()) ? it->second : se->var_name;
+        stack.push_back(SetBangBuild{name});
+        stack.push_back(EvalFrame{se->expr.get(), env});
+    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        if (beg->exprs.empty()) {
+            results.push_back(std::make_unique<BeginExpr>(
+                std::vector<std::unique_ptr<Expr>>{}));
+        } else {
+            std::vector<const Expr *> remaining;
+            for (size_t i = 1; i < beg->exprs.size(); ++i) {
+                remaining.push_back(beg->exprs[i].get());
+            }
+            stack.push_back(BeginBuild{std::move(remaining), env,
+                                        beg->exprs.size()});
+            stack.push_back(EvalFrame{beg->exprs[0].get(), env});
+        }
+    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        results.push_back(std::make_unique<VoidExpr>());
+    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        auto it = env.find(ge->name);
+        std::string name = (it != env.end()) ? it->second : ge->name;
+        results.push_back(std::make_unique<GetExpr>(name));
     }
 }
 
@@ -88,6 +122,34 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         auto body = std::move(results.back()); results.pop_back();
         auto init = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<LetExpr>(lb->new_var, std::move(init), std::move(body)));
+    } else if (auto *wc = std::get_if<WhileBuildCond>(&frame)) {
+        stack.push_back(WhileBuildBody{});
+        stack.push_back(EvalFrame{wc->body, wc->env});
+    } else if (std::get_if<WhileBuildBody>(&frame) != nullptr) {
+        auto body = std::move(results.back()); results.pop_back();
+        auto cond = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<WhileExpr>(
+            std::move(cond), std::move(body)));
+    } else if (auto *sb = std::get_if<SetBangBuild>(&frame)) {
+        auto expr = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<SetBangExpr>(
+            sb->var_name, std::move(expr)));
+    } else if (auto *bb = std::get_if<BeginBuild>(&frame)) {
+        if (bb->remaining.empty()) {
+            std::vector<std::unique_ptr<Expr>> exprs;
+            for (size_t i = 0; i < bb->total; ++i) {
+                exprs.push_back(std::move(results.back()));
+                results.pop_back();
+            }
+            std::reverse(exprs.begin(), exprs.end());
+            results.push_back(std::make_unique<BeginExpr>(std::move(exprs)));
+        } else {
+            const Expr *next = bb->remaining[0];
+            std::vector<const Expr *> rest(bb->remaining.begin() + 1,
+                                            bb->remaining.end());
+            stack.push_back(BeginBuild{std::move(rest), bb->env, bb->total});
+            stack.push_back(EvalFrame{next, bb->env});
+        }
     }
 }
 

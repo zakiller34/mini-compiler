@@ -15,6 +15,7 @@ set(TEST_SOURCES
     test_patch
     test_type_checker
     test_shrink
+    test_uncover_get
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)

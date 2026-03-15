@@ -13,6 +13,7 @@
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
 #include "passes/select_instructions.h"
+#include "passes/uncover_get.h"
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
 
@@ -20,7 +21,8 @@
 static std::string run_pipeline(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   auto s0__ = shrink(prog); auto u = uniquify(*s0__);
-  auto r = remove_complex_operands(*u);
+  auto ug = uncover_get(*u);
+  auto r = remove_complex_operands(*ug);
   auto c = explicate_control(*r);
   auto s = select_instructions(c);
   auto a = assign_homes(s);
@@ -174,4 +176,60 @@ TEST(Pipeline, NestedIf) {
   auto asm_str = run_pipeline(std::move(e));
   EXPECT_FALSE(asm_str.empty());
   EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+}
+
+// ---- Phase 4: while/set!/begin/void tests ----
+
+TEST(Pipeline, WhileLoop) {
+  // let i = 0; let sum = 0;
+  // begin { while (i < 5) { begin { set! sum (sum + i); set! i (i + 1) } }; sum }
+  std::vector<std::unique_ptr<Expr>> while_body;
+  while_body.push_back(std::make_unique<SetBangExpr>(
+      "sum", std::make_unique<BinaryExpr>(
+          BinaryOp::Add,
+          std::make_unique<VarExpr>("sum"),
+          std::make_unique<VarExpr>("i"))));
+  while_body.push_back(std::make_unique<SetBangExpr>(
+      "i", std::make_unique<BinaryExpr>(
+          BinaryOp::Add,
+          std::make_unique<VarExpr>("i"),
+          std::make_unique<IntExpr>(1))));
+
+  std::vector<std::unique_ptr<Expr>> outer;
+  outer.push_back(std::make_unique<WhileExpr>(
+      std::make_unique<BinaryExpr>(
+          BinaryOp::Lt,
+          std::make_unique<VarExpr>("i"),
+          std::make_unique<IntExpr>(5)),
+      std::make_unique<BeginExpr>(std::move(while_body))));
+  outer.push_back(std::make_unique<VarExpr>("sum"));
+
+  auto e = std::make_unique<LetExpr>(
+      "i", std::make_unique<IntExpr>(0),
+      std::make_unique<LetExpr>(
+          "sum", std::make_unique<IntExpr>(0),
+          std::make_unique<BeginExpr>(std::move(outer))));
+
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("main"), std::string::npos);
+}
+
+TEST(Pipeline, SetBang) {
+  // let x = 10; begin { set! x 42; x }
+  std::vector<std::unique_ptr<Expr>> bexprs;
+  bexprs.push_back(std::make_unique<SetBangExpr>(
+      "x", std::make_unique<IntExpr>(42)));
+  bexprs.push_back(std::make_unique<VarExpr>("x"));
+  auto e = std::make_unique<LetExpr>(
+      "x", std::make_unique<IntExpr>(10),
+      std::make_unique<BeginExpr>(std::move(bexprs)));
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
+}
+
+TEST(Pipeline, VoidExpr) {
+  auto e = std::make_unique<VoidExpr>();
+  auto asm_str = run_pipeline(std::move(e));
+  EXPECT_FALSE(asm_str.empty());
 }

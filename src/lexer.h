@@ -30,6 +30,11 @@ enum class TokenKind {
     Gt,
     Ge,
     Semicolon,
+    While,
+    Void,
+    Begin,
+    Set,
+    Bang,
     Eof,
     Error
 };

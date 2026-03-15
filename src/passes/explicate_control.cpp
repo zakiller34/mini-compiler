@@ -20,6 +20,12 @@ cir::Atom make_atom(const Expr *e) {
     if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
         return cir::BoolAtom{be->value};
     }
+    if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        return cir::VarAtom{ge->name};
+    }
+    if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        return cir::IntAtom{0};
+    }
     return cir::VarAtom{dynamic_cast<const VarExpr *>(e)->name};
 }
 
@@ -33,6 +39,12 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
     }
     if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
         return cir::AtomExpr{cir::VarAtom{ve->name}};
+    }
+    if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        return cir::AtomExpr{cir::VarAtom{ge->name}};
+    }
+    if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        return cir::AtomExpr{cir::IntAtom{0}};
     }
     if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
         return cir::CReadExpr{};
@@ -100,7 +112,22 @@ struct AssignWork {
     std::string cont_label;
 };
 
-using Work = std::variant<TailWork, PredWork, AssignWork>;
+struct EffectWork {
+    std::string block_label;
+    std::vector<cir::Assign> stmts;
+    const Expr *expr;
+    std::string cont_label;
+};
+
+using Work = std::variant<TailWork, PredWork, AssignWork, EffectWork>;
+
+/// @brief Check if expr needs complex handling (if, while, begin, set!)
+bool is_complex_init(const Expr *e) {
+    return dynamic_cast<const IfExpr *>(e) != nullptr ||
+           dynamic_cast<const WhileExpr *>(e) != nullptr ||
+           dynamic_cast<const BeginExpr *>(e) != nullptr ||
+           dynamic_cast<const SetBangExpr *>(e) != nullptr;
+}
 
 /// @brief Peel lets from expression, accumulating assignments
 /// @ensures cur points to non-let terminal
@@ -108,8 +135,7 @@ void peel_lets(const Expr *&cur, std::vector<cir::Assign> &stmts) {
     // invariant: stmts has assignments from peeled lets
     // decreases: depth of let nesting
     while (const auto *le = dynamic_cast<const LetExpr *>(cur)) {
-        // Check if init is an IfExpr — needs special handling
-        if (dynamic_cast<const IfExpr *>(le->init.get()) != nullptr) {
+        if (is_complex_init(le->init.get())) {
             break; // can't peel, need assign mode
         }
         stmts.push_back({le->var, expr_to_cexpr(le->init.get())});
@@ -131,10 +157,8 @@ void process_work(std::vector<Work> &worklist,
             peel_lets(cur, stmts);
 
             if (const auto *ife = dynamic_cast<const IfExpr *>(cur)) {
-                // If in tail position: branches get own blocks
                 std::string then_l = fresh_label("then");
                 std::string else_l = fresh_label("else");
-
                 worklist.push_back(TailWork{then_l, {},
                                              ife->then_branch.get()});
                 worklist.push_back(TailWork{else_l, {},
@@ -142,11 +166,72 @@ void process_work(std::vector<Work> &worklist,
                 worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
                                              tw->block_label, std::move(stmts)});
             } else if (const auto *le = dynamic_cast<const LetExpr *>(cur)) {
-                // Let with IfExpr init
+                // Let with complex init
                 std::string cont_l = fresh_label("cont");
                 worklist.push_back(TailWork{cont_l, {}, le->body.get()});
                 worklist.push_back(AssignWork{tw->block_label, std::move(stmts),
                                               le->init.get(), le->var, cont_l});
+            } else if (const auto *we = dynamic_cast<const WhileExpr *>(cur)) {
+                // while(cond) body in tail position → result is void
+                std::string loop_entry = fresh_label("loop_entry");
+                std::string loop_body = fresh_label("loop_body");
+                std::string loop_exit = fresh_label("loop_exit");
+                // Current block → goto loop_entry
+                blocks[tw->block_label] = {std::move(stmts),
+                                            cir::Goto{loop_entry}};
+                // loop_body → body as effect, goto loop_entry
+                worklist.push_back(EffectWork{loop_body, {},
+                                               we->body.get(), loop_entry});
+                // loop_entry → pred(cond, loop_body, loop_exit)
+                worklist.push_back(PredWork{we->cond.get(), loop_body,
+                                             loop_exit, loop_entry, {}});
+                // loop_exit → return void (int 0)
+                blocks[loop_exit] = {{},
+                    cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+            } else if (const auto *se = dynamic_cast<const SetBangExpr *>(cur)) {
+                // set! in tail position: assign, return void
+                stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
+                blocks[tw->block_label] = {std::move(stmts),
+                    cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+            } else if (const auto *beg = dynamic_cast<const BeginExpr *>(cur)) {
+                if (beg->exprs.empty()) {
+                    blocks[tw->block_label] = {std::move(stmts),
+                        cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+                } else {
+                    // Chain: non-last exprs as effects, last in tail
+                    // If any non-last expr is complex, chain via EffectWork
+                    std::string cur_label = tw->block_label;
+                    auto cur_stmts = std::move(stmts);
+                    for (size_t i = 0; i + 1 < beg->exprs.size(); ++i) {
+                        const Expr *sub = beg->exprs[i].get();
+                        if (is_complex_init(sub) ||
+                            dynamic_cast<const WhileExpr *>(sub) != nullptr ||
+                            dynamic_cast<const IfExpr *>(sub) != nullptr) {
+                            std::string next_l = fresh_label("seq");
+                            worklist.push_back(EffectWork{cur_label,
+                                std::move(cur_stmts), sub, next_l});
+                            cur_label = next_l;
+                            cur_stmts = {};
+                        } else if (const auto *ss =
+                                dynamic_cast<const SetBangExpr *>(sub)) {
+                            cur_stmts.push_back({ss->var_name,
+                                expr_to_cexpr(ss->expr.get())});
+                        } else {
+                            std::string dummy = fresh_label("_");
+                            cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
+                        }
+                    }
+                    const Expr *last = beg->exprs.back().get();
+                    peel_lets(last, cur_stmts);
+                    if (is_complex_init(last) ||
+                        dynamic_cast<const WhileExpr *>(last) != nullptr) {
+                        worklist.push_back(TailWork{cur_label,
+                                                     std::move(cur_stmts), last});
+                    } else {
+                        blocks[cur_label] = {std::move(cur_stmts),
+                            cir::Return{expr_to_cexpr(last)}};
+                    }
+                }
             } else {
                 blocks[tw->block_label] = {std::move(stmts),
                                             cir::Return{expr_to_cexpr(cur)}};
@@ -208,11 +293,8 @@ void process_work(std::vector<Work> &worklist,
         } else if (auto *aw = std::get_if<AssignWork>(&work)) {
             const Expr *e = aw->expr;
             if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
-                // If in assign: both branches assign to var, goto cont
                 std::string then_l = fresh_label("athen");
                 std::string else_l = fresh_label("aelse");
-
-                // Then branch: assign result to var, goto cont
                 worklist.push_back(AssignWork{then_l, {}, ife->then_branch.get(),
                                                aw->var, aw->cont_label});
                 worklist.push_back(AssignWork{else_l, {}, ife->else_branch.get(),
@@ -220,12 +302,137 @@ void process_work(std::vector<Work> &worklist,
                 worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
                                              aw->block_label,
                                              std::move(aw->stmts)});
+            } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+                // while in assign: run loop, assign void to var, goto cont
+                std::string loop_entry = fresh_label("loop_entry");
+                std::string loop_body = fresh_label("loop_body");
+                std::string loop_exit = fresh_label("loop_exit");
+                blocks[aw->block_label] = {std::move(aw->stmts),
+                                            cir::Goto{loop_entry}};
+                worklist.push_back(EffectWork{loop_body, {},
+                                               we->body.get(), loop_entry});
+                worklist.push_back(PredWork{we->cond.get(), loop_body,
+                                             loop_exit, loop_entry, {}});
+                // loop_exit: assign void (0) to var, goto cont
+                blocks[loop_exit] = {
+                    {{aw->var, cir::AtomExpr{cir::IntAtom{0}}}},
+                    cir::Goto{aw->cont_label}};
+            } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+                auto cur_stmts = std::move(aw->stmts);
+                std::string cur_label = aw->block_label;
+                for (size_t i = 0; i + 1 < beg->exprs.size(); ++i) {
+                    const Expr *sub = beg->exprs[i].get();
+                    if (is_complex_init(sub) ||
+                        dynamic_cast<const WhileExpr *>(sub) != nullptr ||
+                        dynamic_cast<const IfExpr *>(sub) != nullptr) {
+                        std::string next_l = fresh_label("seq");
+                        worklist.push_back(EffectWork{cur_label,
+                            std::move(cur_stmts), sub, next_l});
+                        cur_label = next_l;
+                        cur_stmts = {};
+                    } else if (const auto *ss =
+                            dynamic_cast<const SetBangExpr *>(sub)) {
+                        cur_stmts.push_back({ss->var_name,
+                            expr_to_cexpr(ss->expr.get())});
+                    } else {
+                        std::string dummy = fresh_label("_");
+                        cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
+                    }
+                }
+                const Expr *last = beg->exprs.empty()
+                    ? nullptr : beg->exprs.back().get();
+                if (last == nullptr) {
+                    cur_stmts.push_back({aw->var,
+                        cir::AtomExpr{cir::IntAtom{0}}});
+                    blocks[cur_label] = {std::move(cur_stmts),
+                        cir::Goto{aw->cont_label}};
+                } else if (is_complex_init(last) ||
+                           dynamic_cast<const WhileExpr *>(last) != nullptr) {
+                    worklist.push_back(AssignWork{cur_label,
+                        std::move(cur_stmts), last, aw->var, aw->cont_label});
+                } else {
+                    cur_stmts.push_back({aw->var, expr_to_cexpr(last)});
+                    blocks[cur_label] = {std::move(cur_stmts),
+                        cir::Goto{aw->cont_label}};
+                }
+            } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+                auto stmts = std::move(aw->stmts);
+                stmts.push_back({se->var_name,
+                    expr_to_cexpr(se->expr.get())});
+                stmts.push_back({aw->var,
+                    cir::AtomExpr{cir::IntAtom{0}}});
+                blocks[aw->block_label] = {std::move(stmts),
+                    cir::Goto{aw->cont_label}};
             } else {
-                // Simple assign + goto cont
                 auto stmts = std::move(aw->stmts);
                 stmts.push_back({aw->var, expr_to_cexpr(e)});
                 blocks[aw->block_label] = {std::move(stmts),
                                             cir::Goto{aw->cont_label}};
+            }
+        } else if (auto *ew = std::get_if<EffectWork>(&work)) {
+            const Expr *e = ew->expr;
+            auto stmts = std::move(ew->stmts);
+            peel_lets(e, stmts);
+
+            if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+                stmts.push_back({se->var_name,
+                    expr_to_cexpr(se->expr.get())});
+                blocks[ew->block_label] = {std::move(stmts),
+                    cir::Goto{ew->cont_label}};
+            } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+                std::string cur_label = ew->block_label;
+                auto cur_stmts = std::move(stmts);
+                for (size_t i = 0; i < beg->exprs.size(); ++i) {
+                    const Expr *sub = beg->exprs[i].get();
+                    if (is_complex_init(sub) ||
+                        dynamic_cast<const WhileExpr *>(sub) != nullptr ||
+                        dynamic_cast<const IfExpr *>(sub) != nullptr) {
+                        std::string next_l = fresh_label("seq");
+                        worklist.push_back(EffectWork{cur_label,
+                            std::move(cur_stmts), sub, next_l});
+                        cur_label = next_l;
+                        cur_stmts = {};
+                    } else if (const auto *ss =
+                            dynamic_cast<const SetBangExpr *>(sub)) {
+                        cur_stmts.push_back({ss->var_name,
+                            expr_to_cexpr(ss->expr.get())});
+                    } else {
+                        std::string dummy = fresh_label("_");
+                        cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
+                    }
+                }
+                blocks[cur_label] = {std::move(cur_stmts),
+                    cir::Goto{ew->cont_label}};
+            } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+                // Nested while in effect position
+                std::string loop_entry = fresh_label("loop_entry");
+                std::string loop_body = fresh_label("loop_body");
+                std::string loop_exit = fresh_label("loop_exit");
+                blocks[ew->block_label] = {std::move(stmts),
+                                            cir::Goto{loop_entry}};
+                worklist.push_back(EffectWork{loop_body, {},
+                                               we->body.get(), loop_entry});
+                worklist.push_back(PredWork{we->cond.get(), loop_body,
+                                             loop_exit, loop_entry, {}});
+                blocks[loop_exit] = {{}, cir::Goto{ew->cont_label}};
+            } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+                // If in effect position
+                std::string then_l = fresh_label("ethen");
+                std::string else_l = fresh_label("eelse");
+                worklist.push_back(EffectWork{then_l, {},
+                                               ife->then_branch.get(),
+                                               ew->cont_label});
+                worklist.push_back(EffectWork{else_l, {},
+                                               ife->else_branch.get(),
+                                               ew->cont_label});
+                worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
+                                             ew->block_label, std::move(stmts)});
+            } else {
+                // Simple effect: evaluate and discard
+                std::string dummy = fresh_label("_");
+                stmts.push_back({dummy, expr_to_cexpr(e)});
+                blocks[ew->block_label] = {std::move(stmts),
+                    cir::Goto{ew->cont_label}};
             }
         }
     }

@@ -3,11 +3,12 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 enum class UnaryOp { Neg, Not };
 enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
-/// Base class for all expressions in L_If.
+/// Base class for all expressions in L_While.
 class Expr {
 public:
   virtual ~Expr() = default;
@@ -81,6 +82,45 @@ public:
   std::unique_ptr<Expr> body;
   LetExpr(std::string v, std::unique_ptr<Expr> i, std::unique_ptr<Expr> b)
       : var(std::move(v)), init(std::move(i)), body(std::move(b)) {}
+  std::string dump() const override;
+};
+
+class WhileExpr : public Expr {
+public:
+  std::unique_ptr<Expr> cond;
+  std::unique_ptr<Expr> body;
+  WhileExpr(std::unique_ptr<Expr> c, std::unique_ptr<Expr> b)
+      : cond(std::move(c)), body(std::move(b)) {}
+  std::string dump() const override;
+};
+
+class SetBangExpr : public Expr {
+public:
+  std::string var_name;
+  std::unique_ptr<Expr> expr;
+  SetBangExpr(std::string v, std::unique_ptr<Expr> e)
+      : var_name(std::move(v)), expr(std::move(e)) {}
+  std::string dump() const override;
+};
+
+class BeginExpr : public Expr {
+public:
+  std::vector<std::unique_ptr<Expr>> exprs;
+  explicit BeginExpr(std::vector<std::unique_ptr<Expr>> es)
+      : exprs(std::move(es)) {}
+  std::string dump() const override;
+};
+
+class VoidExpr : public Expr {
+public:
+  std::string dump() const override;
+};
+
+/// @brief Introduced by uncover_get, never parsed
+class GetExpr : public Expr {
+public:
+  std::string name;
+  explicit GetExpr(std::string n) : name(std::move(n)) {}
   std::string dump() const override;
 };
 
