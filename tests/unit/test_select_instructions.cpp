@@ -11,12 +11,14 @@
 #include "passes/select_instructions.h"
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
+#include "passes/uncover_get.h"
 
 /// Helper: run pipeline through select_instructions.
 static x86::X86Program run_select(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   auto s0__ = shrink(prog); auto u = uniquify(*s0__);
-  auto r = remove_complex_operands(*u);
+  auto ug = uncover_get(*u);
+  auto r = remove_complex_operands(*ug);
   auto c = explicate_control(*r);
   return select_instructions(c);
 }

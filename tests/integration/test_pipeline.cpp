@@ -233,3 +233,40 @@ TEST(Pipeline, VoidExpr) {
   auto asm_str = run_pipeline(std::move(e));
   EXPECT_FALSE(asm_str.empty());
 }
+
+TEST(Pipeline, NestedWhile) {
+    // let i = 0; let sum = 0;
+    // while (i < 3) { begin { set! sum (+ sum i); set! i (+ i 1) } };
+    // sum
+    std::vector<std::unique_ptr<Expr>> while_body;
+    while_body.push_back(std::make_unique<SetBangExpr>(
+        "sum", std::make_unique<BinaryExpr>(
+            BinaryOp::Add,
+            std::make_unique<VarExpr>("sum"),
+            std::make_unique<VarExpr>("i"))));
+    while_body.push_back(std::make_unique<SetBangExpr>(
+        "i", std::make_unique<BinaryExpr>(
+            BinaryOp::Add,
+            std::make_unique<VarExpr>("i"),
+            std::make_unique<IntExpr>(1))));
+
+    std::vector<std::unique_ptr<Expr>> outer;
+    outer.push_back(std::make_unique<WhileExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Lt,
+            std::make_unique<VarExpr>("i"),
+            std::make_unique<IntExpr>(3)),
+        std::make_unique<BeginExpr>(std::move(while_body))));
+    outer.push_back(std::make_unique<VarExpr>("sum"));
+
+    auto e = std::make_unique<LetExpr>(
+        "i", std::make_unique<IntExpr>(0),
+        std::make_unique<LetExpr>(
+            "sum", std::make_unique<IntExpr>(0),
+            std::make_unique<BeginExpr>(std::move(outer))));
+
+    auto asm_str = run_pipeline(std::move(e));
+    EXPECT_FALSE(asm_str.empty());
+    // Should have loop structure with cmpq + jmpif
+    EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+}

@@ -118,3 +118,45 @@ TEST(Uniquify, TripleShadow) {
   EXPECT_EQ(vars.size(), 3U);
   EXPECT_TRUE(all_unique(vars));
 }
+
+// ---- Phase 4: while/begin/set!/void ----
+
+TEST(Uniquify, WhilePreserved) {
+  // let x = 0; while (x < 3) { set! x (+ x 1) }
+  auto e = std::make_unique<LetExpr>(
+      "x", std::make_unique<IntExpr>(0),
+      std::make_unique<WhileExpr>(
+          std::make_unique<BinaryExpr>(
+              BinaryOp::Lt,
+              std::make_unique<VarExpr>("x"),
+              std::make_unique<IntExpr>(3)),
+          std::make_unique<SetBangExpr>(
+              "x", std::make_unique<BinaryExpr>(
+                  BinaryOp::Add,
+                  std::make_unique<VarExpr>("x"),
+                  std::make_unique<IntExpr>(1)))));
+  Program prog(std::move(e));
+  auto result = uniquify(prog);
+  // Result should be Let with While body
+  ASSERT_EQ(result->body->kind(), NodeKind::Let);
+  auto *le = static_cast<LetExpr *>(result->body.get());
+  ASSERT_EQ(le->body->kind(), NodeKind::While);
+  // let-bound var should be uniquified (has a dot suffix)
+  EXPECT_NE(le->var.find('.'), std::string::npos);
+}
+
+TEST(Uniquify, BeginPreserved) {
+  std::vector<std::unique_ptr<Expr>> bexprs;
+  bexprs.push_back(std::make_unique<IntExpr>(1));
+  bexprs.push_back(std::make_unique<IntExpr>(2));
+  auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+  Program prog(std::move(e));
+  auto result = uniquify(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::Begin);
+}
+
+TEST(Uniquify, VoidPreserved) {
+  Program prog(std::make_unique<VoidExpr>());
+  auto result = uniquify(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::Void);
+}

@@ -7,6 +7,7 @@
 #include "passes/explicate_control.h"
 #include "passes/rco.h"
 #include "passes/shrink.h"
+#include "passes/uncover_get.h"
 #include "passes/uniquify.h"
 
 /// Helper: run full pipeline up to explicate_control.
@@ -14,7 +15,8 @@ static cir::CProgram run_explicate(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   auto s = shrink(prog);
   auto u = uniquify(*s);
-  auto r = remove_complex_operands(*u);
+  auto ug = uncover_get(*u);
+  auto r = remove_complex_operands(*ug);
   return explicate_control(*r);
 }
 
@@ -127,4 +129,50 @@ TEST(ExplicateControl, NestedIfMultipleBlocks) {
   EXPECT_TRUE(has_if_tail(cprog));
   // Nested if produces many blocks
   EXPECT_GE(cprog.blocks.size(), 4U);
+}
+
+// ---- Phase 4: while/set!/begin ----
+
+TEST(ExplicateControl, WhileProducesLoop) {
+    // let x = 0; while (x < 3) (set! x (+ x 1))
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(0),
+        std::make_unique<WhileExpr>(
+            std::make_unique<BinaryExpr>(
+                BinaryOp::Lt,
+                std::make_unique<VarExpr>("x"),
+                std::make_unique<IntExpr>(3)),
+            std::make_unique<SetBangExpr>(
+                "x", std::make_unique<BinaryExpr>(
+                    BinaryOp::Add,
+                    std::make_unique<VarExpr>("x"),
+                    std::make_unique<IntExpr>(1)))));
+    auto cprog = run_explicate(std::move(e));
+    // Should have loop_entry, loop_body, loop_exit blocks + start
+    EXPECT_GE(cprog.blocks.size(), 4U);
+    // Should have Goto back-edges (loop)
+    EXPECT_TRUE(has_goto_tail(cprog));
+}
+
+TEST(ExplicateControl, SetBangProducesAssign) {
+    // let x = 0; set! x 42
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(0),
+        std::make_unique<SetBangExpr>(
+            "x", std::make_unique<IntExpr>(42)));
+    auto cprog = run_explicate(std::move(e));
+    EXPECT_NE(cprog.blocks.find("start"), cprog.blocks.end());
+    // start block should have assignment stmts
+    EXPECT_GE(cprog.blocks.at("start").stmts.size(), 1U);
+}
+
+TEST(ExplicateControl, BeginChainsEffects) {
+    // begin { 1; 2; 42 }
+    std::vector<std::unique_ptr<Expr>> bexprs;
+    bexprs.push_back(std::make_unique<IntExpr>(1));
+    bexprs.push_back(std::make_unique<IntExpr>(2));
+    bexprs.push_back(std::make_unique<IntExpr>(42));
+    auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+    auto cprog = run_explicate(std::move(e));
+    EXPECT_NE(cprog.blocks.find("start"), cprog.blocks.end());
 }

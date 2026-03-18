@@ -7,6 +7,7 @@
 #include "passes/rco.h"
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
+#include "passes/uncover_get.h"
 
 /// Check whether an expression is atomic (IntExpr or VarExpr).
 static bool is_atomic(const Expr *e) {
@@ -59,7 +60,8 @@ static bool check_all_atomic(const Expr *root) {
 static std::unique_ptr<Program> run_rco(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   auto s0__ = shrink(prog); auto u = uniquify(*s0__);
-  return remove_complex_operands(*u);
+  auto ug = uncover_get(*u);
+  return remove_complex_operands(*ug);
 }
 
 TEST(RCO, AlreadyAtomic) {
@@ -102,4 +104,40 @@ TEST(RCO, DeepNest) {
       "a", std::make_unique<IntExpr>(5), std::move(outer));
   auto result = run_rco(std::move(e));
   EXPECT_TRUE(check_all_atomic(result->body.get()));
+}
+
+// ---- Phase 4: while/begin/set!/void ----
+
+TEST(RCO, WhilePassesThrough) {
+  // while (true) { 42 }
+  auto e = std::make_unique<WhileExpr>(
+      std::make_unique<BoolExpr>(true),
+      std::make_unique<IntExpr>(42));
+  auto result = run_rco(std::move(e));
+  ASSERT_EQ(result->body->kind(), NodeKind::While);
+}
+
+TEST(RCO, SetBangPassesThrough) {
+  // let x = 0; set! x 42
+  auto e = std::make_unique<LetExpr>(
+      "x", std::make_unique<IntExpr>(0),
+      std::make_unique<SetBangExpr>(
+          "x", std::make_unique<IntExpr>(42)));
+  auto result = run_rco(std::move(e));
+  // Body should be let with set! inside
+  ASSERT_EQ(result->body->kind(), NodeKind::Let);
+}
+
+TEST(RCO, BeginPassesThrough) {
+  std::vector<std::unique_ptr<Expr>> bexprs;
+  bexprs.push_back(std::make_unique<IntExpr>(1));
+  bexprs.push_back(std::make_unique<IntExpr>(2));
+  auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+  auto result = run_rco(std::move(e));
+  ASSERT_EQ(result->body->kind(), NodeKind::Begin);
+}
+
+TEST(RCO, VoidPassesThrough) {
+  auto result = run_rco(std::make_unique<VoidExpr>());
+  ASSERT_EQ(result->body->kind(), NodeKind::Void);
 }

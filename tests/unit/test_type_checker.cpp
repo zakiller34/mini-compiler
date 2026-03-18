@@ -187,3 +187,59 @@ TEST(TypeChecker, NegBoolThrows) {
       UnaryOp::Neg, std::make_unique<BoolExpr>(true));
   EXPECT_THROW(check(std::move(e)), TypeError);
 }
+
+// ---- Phase 4: while, set!, begin, void ----
+
+TEST(TypeChecker, WhileIsVoid) {
+    // while (true) { 42 } => Void
+    auto e = std::make_unique<WhileExpr>(
+        std::make_unique<BoolExpr>(true),
+        std::make_unique<IntExpr>(42));
+    EXPECT_EQ(check(std::move(e)), Type::Void);
+}
+
+TEST(TypeChecker, WhileCondMustBeBool) {
+    // while (42) { 1 } => TypeError
+    auto e = std::make_unique<WhileExpr>(
+        std::make_unique<IntExpr>(42),
+        std::make_unique<IntExpr>(1));
+    EXPECT_THROW(check(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, SetBangIsVoid) {
+    // let x = 10; set! x 42 => Void
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(10),
+        std::make_unique<SetBangExpr>(
+            "x", std::make_unique<IntExpr>(42)));
+    EXPECT_EQ(check(std::move(e)), Type::Void);
+}
+
+TEST(TypeChecker, SetBangUnboundThrows) {
+    // set! x 42 => TypeError (x not in scope)
+    auto e = std::make_unique<SetBangExpr>(
+        "x", std::make_unique<IntExpr>(42));
+    EXPECT_THROW(check(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, SetBangTypeMismatchThrows) {
+    // let x = 10; set! x true => TypeError
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(10),
+        std::make_unique<SetBangExpr>(
+            "x", std::make_unique<BoolExpr>(true)));
+    EXPECT_THROW(check(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, BeginTypeIsLast) {
+    // begin { 1; true } => Bool
+    std::vector<std::unique_ptr<Expr>> bexprs;
+    bexprs.push_back(std::make_unique<IntExpr>(1));
+    bexprs.push_back(std::make_unique<BoolExpr>(true));
+    auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+    EXPECT_EQ(check(std::move(e)), Type::Bool);
+}
+
+TEST(TypeChecker, VoidIsVoid) {
+    EXPECT_EQ(check(std::make_unique<VoidExpr>()), Type::Void);
+}

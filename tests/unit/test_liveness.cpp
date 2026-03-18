@@ -108,6 +108,72 @@ TEST(Liveness, CallqDoesNotWriteVars) {
     EXPECT_TRUE(live[2].empty());
 }
 
+// ---- Multi-block worklist tests ----
+
+TEST(Liveness, TwoBlocksJmp) {
+    // Block A: movq $1, x; jmp B
+    // Block B: movq x, %rax; jmp conclusion
+    // x should be live across the block boundary
+    x86::X86Program prog;
+    prog.blocks["A"] = {{
+        x86::Movq{x86::Imm{1}, x86::VarArg{"x"}},
+        x86::Jmp{"B"},
+    }};
+    prog.blocks["B"] = {{
+        x86::Movq{x86::VarArg{"x"}, x86::RegArg{x86::Reg::Rax}},
+        x86::Jmp{"conclusion"},
+    }};
+    auto result = analyze_liveness_program(prog);
+    // In block A, after movq $1,x we should have x live (used in B)
+    ASSERT_NE(result.find("A"), result.end());
+    EXPECT_EQ(result["A"][0], (std::set<std::string>{"x"}));
+}
+
+TEST(Liveness, DiamondCFG) {
+    // start: cmpq $0, x; jmpif then_; jmp else_
+    // then_: movq $1, y; jmp join
+    // else_: movq $2, y; jmp join
+    // join:  movq y, %rax; jmp conclusion
+    x86::X86Program prog;
+    prog.blocks["start"] = {{
+        x86::Cmpq{x86::Imm{0}, x86::VarArg{"x"}},
+        x86::JmpIf{x86::CC::E, "then_"},
+        x86::Jmp{"else_"},
+    }};
+    prog.blocks["then_"] = {{
+        x86::Movq{x86::Imm{1}, x86::VarArg{"y"}},
+        x86::Jmp{"join"},
+    }};
+    prog.blocks["else_"] = {{
+        x86::Movq{x86::Imm{2}, x86::VarArg{"y"}},
+        x86::Jmp{"join"},
+    }};
+    prog.blocks["join"] = {{
+        x86::Movq{x86::VarArg{"y"}, x86::RegArg{x86::Reg::Rax}},
+        x86::Jmp{"conclusion"},
+    }};
+    auto result = analyze_liveness_program(prog);
+    // y should be live in then_ and else_ after movq
+    // x should be live in start (read by cmpq)
+    ASSERT_NE(result.find("start"), result.end());
+}
+
+TEST(Liveness, LoopCycleFixpoint) {
+    // loop: addq $1, x; cmpq $10, x; jmpif loop; jmp conclusion
+    // x should be live through the whole loop (read and written)
+    x86::X86Program prog;
+    prog.blocks["loop"] = {{
+        x86::Addq{x86::Imm{1}, x86::VarArg{"x"}},
+        x86::Cmpq{x86::Imm{10}, x86::VarArg{"x"}},
+        x86::JmpIf{x86::CC::L, "loop"},
+        x86::Jmp{"conclusion"},
+    }};
+    auto result = analyze_liveness_program(prog);
+    ASSERT_NE(result.find("loop"), result.end());
+    // x is live after addq (used by cmpq and re-used in next iteration)
+    EXPECT_NE(result["loop"][0].count("x"), 0U);
+}
+
 TEST(Liveness, InstrReadsWriteHelpers) {
     // Test reads/writes helpers directly
     auto movq = x86::Movq{x86::VarArg{"x"}, x86::VarArg{"y"}};

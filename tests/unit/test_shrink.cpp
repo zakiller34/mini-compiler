@@ -168,3 +168,38 @@ TEST(Shrink, IntLiteralUnchanged) {
   const auto *i = static_cast<const IntExpr *>(result->body.get());
   EXPECT_EQ(i->value, 42);
 }
+
+// ---- Phase 4: while/begin/set!/void ----
+
+TEST(Shrink, WhilePassesThrough) {
+  auto e = std::make_unique<WhileExpr>(
+      std::make_unique<BoolExpr>(true),
+      std::make_unique<IntExpr>(1));
+  Program prog(std::move(e));
+  auto result = shrink(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::While);
+}
+
+TEST(Shrink, SetBangPassesThrough) {
+  auto e = std::make_unique<SetBangExpr>(
+      "x", std::make_unique<IntExpr>(42));
+  Program prog(std::move(e));
+  auto result = shrink(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::SetBang);
+}
+
+TEST(Shrink, BeginPassesThrough) {
+  std::vector<std::unique_ptr<Expr>> bexprs;
+  bexprs.push_back(std::make_unique<IntExpr>(1));
+  bexprs.push_back(std::make_unique<IntExpr>(2));
+  auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+  Program prog(std::move(e));
+  auto result = shrink(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::Begin);
+}
+
+TEST(Shrink, VoidPassesThrough) {
+  Program prog(std::make_unique<VoidExpr>());
+  auto result = shrink(prog);
+  ASSERT_EQ(result->body->kind(), NodeKind::Void);
+}

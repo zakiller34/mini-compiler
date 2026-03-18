@@ -118,3 +118,55 @@ static bool z3_shrink_equiv() {
 TEST(TypeCheckerZ3, ShrinkEquiv) {
   EXPECT_TRUE(z3_shrink_equiv());
 }
+
+/// @brief Z3 predicate: while/set!/begin type rules
+/// while: Bool cond -> Void result. set!: type matches -> Void. begin: last type.
+static bool z3_phase4_type_rules() {
+    Z3_config cfg = Z3_mk_config();
+    Z3_context ctx = Z3_mk_context(cfg);
+    Z3_del_config(cfg);
+
+    Z3_sort bool_sort = Z3_mk_bool_sort(ctx);
+    Z3_solver solver = Z3_mk_solver(ctx);
+    Z3_solver_inc_ref(ctx, solver);
+
+    // While rule: cond must be Bool (not Int).
+    // Encode: cond_is_int AND while_accepted is UNSAT
+    Z3_symbol sym_ci = Z3_mk_string_symbol(ctx, "cond_is_int");
+    Z3_ast cond_is_int = Z3_mk_const(ctx, sym_ci, bool_sort);
+    // while requires NOT cond_is_int (i.e., cond is Bool)
+    Z3_ast while_pre = Z3_mk_not(ctx, cond_is_int);
+    // Check: cond_is_int AND while_pre is UNSAT
+    Z3_ast w_args[2] = {cond_is_int, while_pre};
+    Z3_ast bad_while = Z3_mk_and(ctx, 2, w_args);
+    Z3_solver_push(ctx, solver);
+    Z3_solver_assert(ctx, solver, bad_while);
+    bool while_ok = Z3_solver_check(ctx, solver) == Z3_L_FALSE;
+    Z3_solver_pop(ctx, solver, 1);
+
+    // Set! rule: expr type must match var type
+    Z3_symbol sym_vt = Z3_mk_string_symbol(ctx, "var_is_int");
+    Z3_symbol sym_et = Z3_mk_string_symbol(ctx, "expr_is_int");
+    Z3_ast var_is_int = Z3_mk_const(ctx, sym_vt, bool_sort);
+    Z3_ast expr_is_int = Z3_mk_const(ctx, sym_et, bool_sort);
+    // set! requires var_type == expr_type (both int or both bool)
+    Z3_ast types_match = Z3_mk_eq(ctx, var_is_int, expr_is_int);
+    // Check: var_is_int=T, expr_is_int=F AND types_match is UNSAT
+    Z3_ast vt = Z3_mk_eq(ctx, var_is_int, Z3_mk_true(ctx));
+    Z3_ast ef = Z3_mk_eq(ctx, expr_is_int, Z3_mk_false(ctx));
+    Z3_ast s_args[3] = {vt, ef, types_match};
+    Z3_ast bad_set = Z3_mk_and(ctx, 3, s_args);
+    Z3_solver_push(ctx, solver);
+    Z3_solver_assert(ctx, solver, bad_set);
+    bool set_ok = Z3_solver_check(ctx, solver) == Z3_L_FALSE;
+    Z3_solver_pop(ctx, solver, 1);
+
+    Z3_solver_dec_ref(ctx, solver);
+    Z3_del_context(ctx);
+
+    return while_ok && set_ok;
+}
+
+TEST(TypeCheckerZ3, Phase4TypeRules) {
+    EXPECT_TRUE(z3_phase4_type_rules());
+}

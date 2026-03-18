@@ -107,3 +107,58 @@ TEST(Interpreter, ReadAdd) {
       std::make_unique<IntExpr>(10));
   EXPECT_EQ(run(std::move(e), "42"), 52);
 }
+
+// ---- Phase 4: while, set!, begin, void ----
+
+TEST(Interpreter, WhileLoop) {
+    // let x = 0; while (x < 3) (begin (set! x (+ x 1))); returns void, x=3
+    std::vector<std::unique_ptr<Expr>> body_exprs;
+    body_exprs.push_back(std::make_unique<SetBangExpr>(
+        "x", std::make_unique<BinaryExpr>(
+            BinaryOp::Add,
+            std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(1))));
+    auto loop = std::make_unique<WhileExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Lt,
+            std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(3)),
+        std::make_unique<BeginExpr>(std::move(body_exprs)));
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(0), std::move(loop));
+    std::istringstream in("");
+    Program prog(std::move(e));
+    Value result = interpret(prog, in);
+    // while returns void
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}
+
+TEST(Interpreter, SetBangMutatesEnv) {
+    // let x = 10; begin { set! x 42; x }
+    std::vector<std::unique_ptr<Expr>> bexprs;
+    bexprs.push_back(std::make_unique<SetBangExpr>(
+        "x", std::make_unique<IntExpr>(42)));
+    bexprs.push_back(std::make_unique<VarExpr>("x"));
+    auto e = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(10),
+        std::make_unique<BeginExpr>(std::move(bexprs)));
+    EXPECT_EQ(run(std::move(e)), 42);
+}
+
+TEST(Interpreter, BeginReturnsLast) {
+    // begin { 1; 2; 42 }
+    std::vector<std::unique_ptr<Expr>> bexprs;
+    bexprs.push_back(std::make_unique<IntExpr>(1));
+    bexprs.push_back(std::make_unique<IntExpr>(2));
+    bexprs.push_back(std::make_unique<IntExpr>(42));
+    auto e = std::make_unique<BeginExpr>(std::move(bexprs));
+    EXPECT_EQ(run(std::move(e)), 42);
+}
+
+TEST(Interpreter, VoidReturnsVoid) {
+    auto e = std::make_unique<VoidExpr>();
+    std::istringstream in("");
+    Program prog(std::move(e));
+    Value result = interpret(prog, in);
+    EXPECT_TRUE(std::holds_alternative<std::monostate>(result));
+}

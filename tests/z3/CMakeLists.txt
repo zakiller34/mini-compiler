@@ -5,6 +5,7 @@ set(Z3_TEST_SOURCES
     test_coloring_z3
     test_liveness_z3
     test_type_checker_z3
+    test_uncover_get_z3
 )
 
 foreach(test_name IN LISTS Z3_TEST_SOURCES)
