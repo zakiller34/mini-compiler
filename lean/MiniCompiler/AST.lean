@@ -1,5 +1,5 @@
 /-!
-# MiniCompiler AST — L_If
+# MiniCompiler AST — L_While
 
 Mirror of C++ AST as Lean 4 inductive types.
 -/
@@ -21,10 +21,11 @@ inductive BinaryOp where
   | ge : BinaryOp
   deriving Repr, DecidableEq
 
-/-- Type of an expression in L_If. -/
+/-- Type of an expression in L_While. -/
 inductive Ty where
   | int : Ty
   | bool : Ty
+  | void : Ty
   deriving Repr, DecidableEq
 
 inductive Expr where
@@ -36,6 +37,11 @@ inductive Expr where
   | binary (op : BinaryOp) (lhs rhs : Expr) : Expr
   | if_ (cond then_ else_ : Expr) : Expr
   | let_ (var : String) (init body : Expr) : Expr
+  | while_ (cond body : Expr) : Expr
+  | set_ (var : String) (expr : Expr) : Expr
+  | begin (exprs : List Expr) : Expr
+  | void_ : Expr
+  | get (name : String) : Expr
   deriving Repr
 
 structure Program where

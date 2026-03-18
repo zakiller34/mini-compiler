@@ -1,10 +1,14 @@
 import MiniCompiler.AST
+import MiniCompiler.Passes.Shrink
 import MiniCompiler.Passes.Uniquify
+import MiniCompiler.Passes.UncoverGet
 import MiniCompiler.Passes.RCO
 import MiniCompiler.Passes.ExplicateControl
 import MiniCompiler.Passes.SelectInstructions
+import MiniCompiler.Passes.AssignHomes
+import MiniCompiler.Passes.PatchInstructions
+import MiniCompiler.Passes.PreludeConclusion
 import MiniCompiler.Passes.Liveness
 import MiniCompiler.Passes.Interference
 import MiniCompiler.Passes.GraphColoring
 import MiniCompiler.Passes.TypeChecker
-import MiniCompiler.Passes.Shrink
