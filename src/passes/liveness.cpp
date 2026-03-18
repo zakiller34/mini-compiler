@@ -128,37 +128,46 @@ block_backward_pass(const x86::Block &blk,
     return {live_after, live_before};
 }
 
+/// @brief Build CFG successor/predecessor maps from x86 program
+/// @requires prog.blocks valid, skips "main"/"conclusion"
+/// @ensures succ_map[l] = successors, pred_map[l] = predecessors
+struct CfgInfo {
+    std::map<std::string, std::vector<std::string>> succ_map;
+    std::map<std::string, std::vector<std::string>> pred_map;
+    std::vector<std::string> block_order;
+};
+
+static CfgInfo build_cfg(const x86::X86Program &prog) {
+    CfgInfo cfg;
+    // invariant: succ_map/pred_map cover all non-structural blocks
+    for (const auto &[label, blk] : prog.blocks) {
+        if (label == "main" || label == "conclusion") continue;
+        cfg.block_order.push_back(label);
+        cfg.succ_map[label] = block_successors(blk);
+        for (const auto &succ : cfg.succ_map[label]) {
+            cfg.pred_map[succ].push_back(label);
+        }
+    }
+    return cfg;
+}
+
 /// @brief Kildall's worklist algorithm for multi-block liveness
 /// @requires prog has valid blocks with Jmp/JmpIf terminators
 /// @ensures result[label][i] = vars live after instruction i; handles cycles
 std::map<std::string, std::vector<std::set<std::string>>>
 analyze_liveness_program(const x86::X86Program &prog) {
-    // Build successor and predecessor maps
-    std::map<std::string, std::vector<std::string>> succ_map;
-    std::map<std::string, std::vector<std::string>> pred_map;
-    std::vector<std::string> block_order;
+    auto cfg = build_cfg(prog);
 
-    // invariant: succ_map/pred_map cover all non-structural blocks
-    for (const auto &[label, blk] : prog.blocks) {
-        if (label == "main" || label == "conclusion") continue;
-        block_order.push_back(label);
-        succ_map[label] = block_successors(blk);
-        for (const auto &succ : succ_map[label]) {
-            pred_map[succ].push_back(label);
-        }
-    }
-
-    // Initialize live_before for all blocks to empty
     std::map<std::string, std::set<std::string>> live_before_map;
     std::map<std::string, std::vector<std::set<std::string>>> result;
 
     // invariant: live_before_map[l] ⊆ true live-before for l
-    for (const auto &label : block_order) {
+    for (const auto &label : cfg.block_order) {
         live_before_map[label] = {};
     }
 
-    // Worklist: all labels initially
-    std::set<std::string> worklist(block_order.begin(), block_order.end());
+    std::set<std::string> worklist(cfg.block_order.begin(),
+                                    cfg.block_order.end());
 
     // decreases: sum of |live_before[l]| is bounded by #vars × #blocks
     while (!worklist.empty()) {
@@ -171,7 +180,7 @@ analyze_liveness_program(const x86::X86Program &prog) {
 
         // Compute exit_live = union of successors' live_before
         std::set<std::string> exit_live;
-        for (const auto &succ : succ_map[label]) {
+        for (const auto &succ : cfg.succ_map[label]) {
             auto sit = live_before_map.find(succ);
             if (sit != live_before_map.end()) {
                 exit_live.insert(sit->second.begin(), sit->second.end());
@@ -181,11 +190,10 @@ analyze_liveness_program(const x86::X86Program &prog) {
         auto [live_after, live_before] = block_backward_pass(blk, exit_live);
         result[label] = std::move(live_after);
 
-        // If live_before changed, add predecessors to worklist
         if (live_before != live_before_map[label]) {
             live_before_map[label] = std::move(live_before);
-            auto pit = pred_map.find(label);
-            if (pit != pred_map.end()) {
+            auto pit = cfg.pred_map.find(label);
+            if (pit != cfg.pred_map.end()) {
                 for (const auto &pred : pit->second) {
                     worklist.insert(pred);
                 }

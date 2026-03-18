@@ -6,13 +6,16 @@
 
 namespace {
 
-int label_counter = 0;
-
-std::string fresh_label(const std::string &prefix) {
+/// @brief Generate unique label with prefix
+/// @requires label_counter >= 0
+/// @ensures result = prefix + "_" + N, label_counter incremented
+std::string fresh_label(const std::string &prefix, int &label_counter) {
     return prefix + "_" + std::to_string(label_counter++);
 }
 
 /// @brief Convert leaf/atomic expr to CIR Atom
+/// @requires e is Int/Bool/Var/Get/Void (atomic after RCO)
+/// @ensures result is corresponding CIR Atom
 cir::Atom make_atom(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::Int:
@@ -31,16 +34,22 @@ cir::Atom make_atom(const Expr *e) {
 }
 
 /// @brief Convert AST expr to CExpr (for atomic/simple exprs after RCO)
+/// @requires e is atomic or simple (Unary/Binary with atomic operands)
+/// @ensures result is corresponding CIR CExpr
 cir::CExpr expr_to_cexpr(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::Int:
-        return cir::AtomExpr{cir::IntAtom{static_cast<const IntExpr *>(e)->value}};
+        return cir::AtomExpr{cir::IntAtom{
+            static_cast<const IntExpr *>(e)->value}};
     case NodeKind::Bool:
-        return cir::AtomExpr{cir::BoolAtom{static_cast<const BoolExpr *>(e)->value}};
+        return cir::AtomExpr{cir::BoolAtom{
+            static_cast<const BoolExpr *>(e)->value}};
     case NodeKind::Var:
-        return cir::AtomExpr{cir::VarAtom{static_cast<const VarExpr *>(e)->name}};
+        return cir::AtomExpr{cir::VarAtom{
+            static_cast<const VarExpr *>(e)->name}};
     case NodeKind::Get:
-        return cir::AtomExpr{cir::VarAtom{static_cast<const GetExpr *>(e)->name}};
+        return cir::AtomExpr{cir::VarAtom{
+            static_cast<const GetExpr *>(e)->name}};
     case NodeKind::Void:
         return cir::AtomExpr{cir::IntAtom{0}};
     case NodeKind::Read:
@@ -90,13 +99,11 @@ cir::CCmpOp to_cmp_op(BinaryOp op) {
     }
 }
 
-// Forward declarations for mutual "recursion" via work items
 struct TailWork {
     std::string block_label;
     std::vector<cir::Assign> stmts;
     const Expr *expr;
 };
-
 struct PredWork {
     const Expr *expr;
     std::string then_label;
@@ -104,7 +111,6 @@ struct PredWork {
     std::string block_label;
     std::vector<cir::Assign> stmts;
 };
-
 struct AssignWork {
     std::string block_label;
     std::vector<cir::Assign> stmts;
@@ -112,14 +118,12 @@ struct AssignWork {
     std::string var;
     std::string cont_label;
 };
-
 struct EffectWork {
     std::string block_label;
     std::vector<cir::Assign> stmts;
     const Expr *expr;
     std::string cont_label;
 };
-
 using Work = std::variant<TailWork, PredWork, AssignWork, EffectWork>;
 
 /// @brief Check if expr needs complex handling (if, while, begin, set!)
@@ -140,372 +144,337 @@ void peel_lets(const Expr *&cur, std::vector<cir::Assign> &stmts) {
     // decreases: depth of let nesting
     while (cur->kind() == NodeKind::Let) {
         auto *le = static_cast<const LetExpr *>(cur);
-        if (is_complex_init(le->init.get())) {
-            break;
-        }
+        if (is_complex_init(le->init.get())) break;
         stmts.push_back({le->var, expr_to_cexpr(le->init.get())});
         cur = le->body.get();
     }
 }
 
-/// @brief Process work items iteratively
+/// @brief Emit begin sub-exprs as effects, return label for last
+/// @requires exprs non-empty, handles complex sub-exprs via worklist
+/// @ensures simple sub-exprs added as stmts, complex ones via EffectWork
+void emit_begin_effects(
+    const std::vector<std::unique_ptr<Expr>> &exprs, size_t count,
+    std::string &cur_label, std::vector<cir::Assign> &cur_stmts,
+    std::vector<Work> &wl, int &lc) {
+    // invariant: cur_stmts collects simple assigns for cur_label
+    for (size_t i = 0; i < count; ++i) {
+        const Expr *sub = exprs[i].get();
+        if (is_complex_init(sub)) {
+            std::string next_l = fresh_label("seq", lc);
+            wl.push_back(EffectWork{cur_label,
+                std::move(cur_stmts), sub, next_l});
+            cur_label = next_l;
+            cur_stmts = {};
+        } else if (sub->kind() == NodeKind::SetBang) {
+            auto *ss = static_cast<const SetBangExpr *>(sub);
+            cur_stmts.push_back({ss->var_name,
+                expr_to_cexpr(ss->expr.get())});
+        } else {
+            std::string dummy = fresh_label("_", lc);
+            cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
+        }
+    }
+}
+
+/// @brief Handle TailWork: expr in tail (return) position
+/// @requires tw valid, blocks/worklist/lc by ref
+/// @ensures new blocks emitted or work items pushed
+void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
+                      std::map<std::string, cir::BasicBlock> &blocks,
+                      int &lc) {
+    auto stmts = std::move(tw.stmts);
+    const Expr *cur = tw.expr;
+    peel_lets(cur, stmts);
+
+    switch (cur->kind()) {
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(cur);
+        std::string then_l = fresh_label("then", lc);
+        std::string else_l = fresh_label("else", lc);
+        wl.push_back(TailWork{then_l, {}, ife->then_branch.get()});
+        wl.push_back(TailWork{else_l, {}, ife->else_branch.get()});
+        wl.push_back(PredWork{ife->cond.get(), then_l, else_l,
+                               tw.block_label, std::move(stmts)});
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(cur);
+        std::string cont_l = fresh_label("cont", lc);
+        wl.push_back(TailWork{cont_l, {}, le->body.get()});
+        wl.push_back(AssignWork{tw.block_label, std::move(stmts),
+                                le->init.get(), le->var, cont_l});
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(cur);
+        std::string le = fresh_label("loop_entry", lc);
+        std::string lb = fresh_label("loop_body", lc);
+        std::string lx = fresh_label("loop_exit", lc);
+        blocks[tw.block_label] = {std::move(stmts), cir::Goto{le}};
+        wl.push_back(EffectWork{lb, {}, we->body.get(), le});
+        wl.push_back(PredWork{we->cond.get(), lb, lx, le, {}});
+        blocks[lx] = {{}, cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(cur);
+        stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
+        blocks[tw.block_label] = {std::move(stmts),
+            cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(cur);
+        if (beg->exprs.empty()) {
+            blocks[tw.block_label] = {std::move(stmts),
+                cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
+            break;
+        }
+        std::string cl = tw.block_label;
+        auto cs = std::move(stmts);
+        emit_begin_effects(beg->exprs, beg->exprs.size() - 1, cl, cs, wl, lc);
+        const Expr *last = beg->exprs.back().get();
+        peel_lets(last, cs);
+        if (is_complex_init(last)) {
+            wl.push_back(TailWork{cl, std::move(cs), last});
+        } else {
+            blocks[cl] = {std::move(cs), cir::Return{expr_to_cexpr(last)}};
+        }
+        break;
+    }
+    default:
+        blocks[tw.block_label] = {std::move(stmts),
+                                    cir::Return{expr_to_cexpr(cur)}};
+        break;
+    }
+}
+
+/// @brief Handle PredWork: expr in predicate (condition) position
+/// @requires pw valid
+/// @ensures IfStmt/Goto block emitted or work items pushed
+/// @returns true if caller should continue (skip fallthrough default)
+bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
+                      std::map<std::string, cir::BasicBlock> &blocks,
+                      int &lc) {
+    const Expr *cond = pw.expr;
+    switch (cond->kind()) {
+    case NodeKind::Binary: {
+        auto *bine = static_cast<const BinaryExpr *>(cond);
+        if (bine->op == BinaryOp::Eq || bine->op == BinaryOp::Lt ||
+            bine->op == BinaryOp::Le || bine->op == BinaryOp::Gt ||
+            bine->op == BinaryOp::Ge) {
+            blocks[pw.block_label] = {std::move(pw.stmts),
+                cir::IfStmt{to_cmp_op(bine->op),
+                             make_atom(bine->lhs.get()),
+                             make_atom(bine->rhs.get()),
+                             pw.then_label, pw.else_label}};
+            return true;
+        }
+        break;
+    }
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(cond);
+        if (ue->op == UnaryOp::Not) {
+            wl.push_back(PredWork{ue->operand.get(),
+                                   pw.else_label, pw.then_label,
+                                   pw.block_label, std::move(pw.stmts)});
+            return true;
+        }
+        break;
+    }
+    case NodeKind::Bool: {
+        auto *be = static_cast<const BoolExpr *>(cond);
+        blocks[pw.block_label] = {std::move(pw.stmts),
+            cir::Goto{be->value ? pw.then_label : pw.else_label}};
+        return true;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(cond);
+        std::string it = fresh_label("pthen", lc);
+        std::string ie = fresh_label("pelse", lc);
+        wl.push_back(PredWork{ife->then_branch.get(),
+                               pw.then_label, pw.else_label, it, {}});
+        wl.push_back(PredWork{ife->else_branch.get(),
+                               pw.then_label, pw.else_label, ie, {}});
+        wl.push_back(PredWork{ife->cond.get(), it, ie,
+                               pw.block_label, std::move(pw.stmts)});
+        return true;
+    }
+    default:
+        break;
+    }
+    blocks[pw.block_label] = {std::move(pw.stmts),
+        cir::IfStmt{cir::CCmpOp::Eq, make_atom(cond),
+                     cir::BoolAtom{true},
+                     pw.then_label, pw.else_label}};
+    return false;
+}
+
+/// @brief Handle AssignWork: expr assigned to var, then goto cont
+/// @requires aw valid
+/// @ensures assignment block emitted or work items pushed
+void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
+                        std::map<std::string, cir::BasicBlock> &blocks,
+                        int &lc) {
+    const Expr *e = aw.expr;
+    switch (e->kind()) {
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
+        std::string tl = fresh_label("athen", lc);
+        std::string el = fresh_label("aelse", lc);
+        wl.push_back(AssignWork{tl, {}, ife->then_branch.get(),
+                                 aw.var, aw.cont_label});
+        wl.push_back(AssignWork{el, {}, ife->else_branch.get(),
+                                 aw.var, aw.cont_label});
+        wl.push_back(PredWork{ife->cond.get(), tl, el,
+                               aw.block_label, std::move(aw.stmts)});
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
+        std::string le = fresh_label("loop_entry", lc);
+        std::string lb = fresh_label("loop_body", lc);
+        std::string lx = fresh_label("loop_exit", lc);
+        blocks[aw.block_label] = {std::move(aw.stmts), cir::Goto{le}};
+        wl.push_back(EffectWork{lb, {}, we->body.get(), le});
+        wl.push_back(PredWork{we->cond.get(), lb, lx, le, {}});
+        blocks[lx] = {{{aw.var, cir::AtomExpr{cir::IntAtom{0}}}},
+                       cir::Goto{aw.cont_label}};
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
+        auto cs = std::move(aw.stmts);
+        std::string cl = aw.block_label;
+        emit_begin_effects(beg->exprs, beg->exprs.size() > 0
+            ? beg->exprs.size() - 1 : 0, cl, cs, wl, lc);
+        const Expr *last = beg->exprs.empty()
+            ? nullptr : beg->exprs.back().get();
+        if (last == nullptr) {
+            cs.push_back({aw.var, cir::AtomExpr{cir::IntAtom{0}}});
+            blocks[cl] = {std::move(cs), cir::Goto{aw.cont_label}};
+        } else if (is_complex_init(last)) {
+            wl.push_back(AssignWork{cl, std::move(cs), last,
+                                     aw.var, aw.cont_label});
+        } else {
+            cs.push_back({aw.var, expr_to_cexpr(last)});
+            blocks[cl] = {std::move(cs), cir::Goto{aw.cont_label}};
+        }
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
+        auto stmts = std::move(aw.stmts);
+        stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
+        stmts.push_back({aw.var, cir::AtomExpr{cir::IntAtom{0}}});
+        blocks[aw.block_label] = {std::move(stmts),
+                                   cir::Goto{aw.cont_label}};
+        break;
+    }
+    default: {
+        auto stmts = std::move(aw.stmts);
+        stmts.push_back({aw.var, expr_to_cexpr(e)});
+        blocks[aw.block_label] = {std::move(stmts),
+                                   cir::Goto{aw.cont_label}};
+        break;
+    }
+    }
+}
+
+/// @brief Handle EffectWork: expr evaluated for side-effect, goto cont
+/// @requires ew valid
+/// @ensures effect block emitted or work items pushed
+void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
+                        std::map<std::string, cir::BasicBlock> &blocks,
+                        int &lc) {
+    const Expr *e = ew.expr;
+    auto stmts = std::move(ew.stmts);
+    peel_lets(e, stmts);
+
+    switch (e->kind()) {
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
+        stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
+        blocks[ew.block_label] = {std::move(stmts),
+                                   cir::Goto{ew.cont_label}};
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
+        std::string cl = ew.block_label;
+        auto cs = std::move(stmts);
+        emit_begin_effects(beg->exprs, beg->exprs.size(), cl, cs, wl, lc);
+        blocks[cl] = {std::move(cs), cir::Goto{ew.cont_label}};
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
+        std::string le = fresh_label("loop_entry", lc);
+        std::string lb = fresh_label("loop_body", lc);
+        std::string lx = fresh_label("loop_exit", lc);
+        blocks[ew.block_label] = {std::move(stmts), cir::Goto{le}};
+        wl.push_back(EffectWork{lb, {}, we->body.get(), le});
+        wl.push_back(PredWork{we->cond.get(), lb, lx, le, {}});
+        blocks[lx] = {{}, cir::Goto{ew.cont_label}};
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
+        std::string tl = fresh_label("ethen", lc);
+        std::string el = fresh_label("eelse", lc);
+        wl.push_back(EffectWork{tl, {}, ife->then_branch.get(),
+                                 ew.cont_label});
+        wl.push_back(EffectWork{el, {}, ife->else_branch.get(),
+                                 ew.cont_label});
+        wl.push_back(PredWork{ife->cond.get(), tl, el,
+                               ew.block_label, std::move(stmts)});
+        break;
+    }
+    default: {
+        std::string dummy = fresh_label("_", lc);
+        stmts.push_back({dummy, expr_to_cexpr(e)});
+        blocks[ew.block_label] = {std::move(stmts),
+                                   cir::Goto{ew.cont_label}};
+        break;
+    }
+    }
+}
+
+/// @brief Worklist loop: pop work, dispatch to handler
+/// @requires worklist has initial TailWork for "start"
+/// @ensures blocks populated with all generated basic blocks
 void process_work(std::vector<Work> &worklist,
-                  std::map<std::string, cir::BasicBlock> &blocks) {
+                  std::map<std::string, cir::BasicBlock> &blocks,
+                  int &lc) {
     // decreases: worklist.size() + complexity of remaining exprs
     while (!worklist.empty()) {
         auto work = std::move(worklist.back());
         worklist.pop_back();
-
         if (auto *tw = std::get_if<TailWork>(&work)) {
-            auto stmts = std::move(tw->stmts);
-            const Expr *cur = tw->expr;
-            peel_lets(cur, stmts);
-
-            switch (cur->kind()) {
-            case NodeKind::If: {
-                auto *ife = static_cast<const IfExpr *>(cur);
-                std::string then_l = fresh_label("then");
-                std::string else_l = fresh_label("else");
-                worklist.push_back(TailWork{then_l, {},
-                                             ife->then_branch.get()});
-                worklist.push_back(TailWork{else_l, {},
-                                             ife->else_branch.get()});
-                worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
-                                             tw->block_label, std::move(stmts)});
-                break;
-            }
-            case NodeKind::Let: {
-                // Let with complex init
-                auto *le = static_cast<const LetExpr *>(cur);
-                std::string cont_l = fresh_label("cont");
-                worklist.push_back(TailWork{cont_l, {}, le->body.get()});
-                worklist.push_back(AssignWork{tw->block_label, std::move(stmts),
-                                              le->init.get(), le->var, cont_l});
-                break;
-            }
-            case NodeKind::While: {
-                // while(cond) body in tail position -> result is void
-                auto *we = static_cast<const WhileExpr *>(cur);
-                std::string loop_entry = fresh_label("loop_entry");
-                std::string loop_body = fresh_label("loop_body");
-                std::string loop_exit = fresh_label("loop_exit");
-                // Current block -> goto loop_entry
-                blocks[tw->block_label] = {std::move(stmts),
-                                            cir::Goto{loop_entry}};
-                // loop_body -> body as effect, goto loop_entry
-                worklist.push_back(EffectWork{loop_body, {},
-                                               we->body.get(), loop_entry});
-                // loop_entry -> pred(cond, loop_body, loop_exit)
-                worklist.push_back(PredWork{we->cond.get(), loop_body,
-                                             loop_exit, loop_entry, {}});
-                // loop_exit -> return void (int 0)
-                blocks[loop_exit] = {{},
-                    cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
-                break;
-            }
-            case NodeKind::SetBang: {
-                // set! in tail position: assign, return void
-                auto *se = static_cast<const SetBangExpr *>(cur);
-                stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
-                blocks[tw->block_label] = {std::move(stmts),
-                    cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
-                break;
-            }
-            case NodeKind::Begin: {
-                auto *beg = static_cast<const BeginExpr *>(cur);
-                if (beg->exprs.empty()) {
-                    blocks[tw->block_label] = {std::move(stmts),
-                        cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
-                } else {
-                    // Chain: non-last exprs as effects, last in tail
-                    std::string cur_label = tw->block_label;
-                    auto cur_stmts = std::move(stmts);
-                    // invariant: cur_stmts collects simple assigns for cur_label
-                    for (size_t i = 0; i + 1 < beg->exprs.size(); ++i) {
-                        const Expr *sub = beg->exprs[i].get();
-                        if (is_complex_init(sub)) {
-                            std::string next_l = fresh_label("seq");
-                            worklist.push_back(EffectWork{cur_label,
-                                std::move(cur_stmts), sub, next_l});
-                            cur_label = next_l;
-                            cur_stmts = {};
-                        } else if (sub->kind() == NodeKind::SetBang) {
-                            auto *ss = static_cast<const SetBangExpr *>(sub);
-                            cur_stmts.push_back({ss->var_name,
-                                expr_to_cexpr(ss->expr.get())});
-                        } else {
-                            std::string dummy = fresh_label("_");
-                            cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
-                        }
-                    }
-                    const Expr *last = beg->exprs.back().get();
-                    peel_lets(last, cur_stmts);
-                    if (is_complex_init(last)) {
-                        worklist.push_back(TailWork{cur_label,
-                                                     std::move(cur_stmts), last});
-                    } else {
-                        blocks[cur_label] = {std::move(cur_stmts),
-                            cir::Return{expr_to_cexpr(last)}};
-                    }
-                }
-                break;
-            }
-            default:
-                blocks[tw->block_label] = {std::move(stmts),
-                                            cir::Return{expr_to_cexpr(cur)}};
-                break;
-            }
+            handle_tail_work(*tw, worklist, blocks, lc);
         } else if (auto *pw = std::get_if<PredWork>(&work)) {
-            const Expr *cond = pw->expr;
-
-            switch (cond->kind()) {
-            case NodeKind::Binary: {
-                auto *bine = static_cast<const BinaryExpr *>(cond);
-                if (bine->op == BinaryOp::Eq || bine->op == BinaryOp::Lt ||
-                    bine->op == BinaryOp::Le || bine->op == BinaryOp::Gt ||
-                    bine->op == BinaryOp::Ge) {
-                    blocks[pw->block_label] = {
-                        std::move(pw->stmts),
-                        cir::IfStmt{to_cmp_op(bine->op),
-                                     make_atom(bine->lhs.get()),
-                                     make_atom(bine->rhs.get()),
-                                     pw->then_label, pw->else_label}};
-                    continue;
-                }
-                break;
-            }
-            case NodeKind::Unary: {
-                auto *ue = static_cast<const UnaryExpr *>(cond);
-                if (ue->op == UnaryOp::Not) {
-                    // Swap then/else
-                    worklist.push_back(PredWork{ue->operand.get(),
-                                                 pw->else_label, pw->then_label,
-                                                 pw->block_label,
-                                                 std::move(pw->stmts)});
-                    continue;
-                }
-                break;
-            }
-            case NodeKind::Bool: {
-                auto *be = static_cast<const BoolExpr *>(cond);
-                blocks[pw->block_label] = {
-                    std::move(pw->stmts),
-                    cir::Goto{be->value ? pw->then_label : pw->else_label}};
-                continue;
-            }
-            case NodeKind::If: {
-                // Nested if in predicate: create blocks for inner branches
-                auto *ife = static_cast<const IfExpr *>(cond);
-                std::string inner_then = fresh_label("pthen");
-                std::string inner_else = fresh_label("pelse");
-                worklist.push_back(PredWork{ife->then_branch.get(),
-                                             pw->then_label, pw->else_label,
-                                             inner_then, {}});
-                worklist.push_back(PredWork{ife->else_branch.get(),
-                                             pw->then_label, pw->else_label,
-                                             inner_else, {}});
-                worklist.push_back(PredWork{ife->cond.get(),
-                                             inner_then, inner_else,
-                                             pw->block_label,
-                                             std::move(pw->stmts)});
-                continue;
-            }
-            default:
-                break;
-            }
-            // Default: compare with true
-            blocks[pw->block_label] = {
-                std::move(pw->stmts),
-                cir::IfStmt{cir::CCmpOp::Eq, make_atom(cond),
-                             cir::BoolAtom{true},
-                             pw->then_label, pw->else_label}};
+            handle_pred_work(*pw, worklist, blocks, lc);
         } else if (auto *aw = std::get_if<AssignWork>(&work)) {
-            const Expr *e = aw->expr;
-            switch (e->kind()) {
-            case NodeKind::If: {
-                auto *ife = static_cast<const IfExpr *>(e);
-                std::string then_l = fresh_label("athen");
-                std::string else_l = fresh_label("aelse");
-                worklist.push_back(AssignWork{then_l, {}, ife->then_branch.get(),
-                                               aw->var, aw->cont_label});
-                worklist.push_back(AssignWork{else_l, {}, ife->else_branch.get(),
-                                               aw->var, aw->cont_label});
-                worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
-                                             aw->block_label,
-                                             std::move(aw->stmts)});
-                break;
-            }
-            case NodeKind::While: {
-                // while in assign: run loop, assign void to var, goto cont
-                auto *we = static_cast<const WhileExpr *>(e);
-                std::string loop_entry = fresh_label("loop_entry");
-                std::string loop_body = fresh_label("loop_body");
-                std::string loop_exit = fresh_label("loop_exit");
-                blocks[aw->block_label] = {std::move(aw->stmts),
-                                            cir::Goto{loop_entry}};
-                worklist.push_back(EffectWork{loop_body, {},
-                                               we->body.get(), loop_entry});
-                worklist.push_back(PredWork{we->cond.get(), loop_body,
-                                             loop_exit, loop_entry, {}});
-                // loop_exit: assign void (0) to var, goto cont
-                blocks[loop_exit] = {
-                    {{aw->var, cir::AtomExpr{cir::IntAtom{0}}}},
-                    cir::Goto{aw->cont_label}};
-                break;
-            }
-            case NodeKind::Begin: {
-                auto *beg = static_cast<const BeginExpr *>(e);
-                auto cur_stmts = std::move(aw->stmts);
-                std::string cur_label = aw->block_label;
-                // invariant: cur_stmts collects simple assigns for cur_label
-                for (size_t i = 0; i + 1 < beg->exprs.size(); ++i) {
-                    const Expr *sub = beg->exprs[i].get();
-                    if (is_complex_init(sub)) {
-                        std::string next_l = fresh_label("seq");
-                        worklist.push_back(EffectWork{cur_label,
-                            std::move(cur_stmts), sub, next_l});
-                        cur_label = next_l;
-                        cur_stmts = {};
-                    } else if (sub->kind() == NodeKind::SetBang) {
-                        auto *ss = static_cast<const SetBangExpr *>(sub);
-                        cur_stmts.push_back({ss->var_name,
-                            expr_to_cexpr(ss->expr.get())});
-                    } else {
-                        std::string dummy = fresh_label("_");
-                        cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
-                    }
-                }
-                const Expr *last = beg->exprs.empty()
-                    ? nullptr : beg->exprs.back().get();
-                if (last == nullptr) {
-                    cur_stmts.push_back({aw->var,
-                        cir::AtomExpr{cir::IntAtom{0}}});
-                    blocks[cur_label] = {std::move(cur_stmts),
-                        cir::Goto{aw->cont_label}};
-                } else if (is_complex_init(last)) {
-                    worklist.push_back(AssignWork{cur_label,
-                        std::move(cur_stmts), last, aw->var, aw->cont_label});
-                } else {
-                    cur_stmts.push_back({aw->var, expr_to_cexpr(last)});
-                    blocks[cur_label] = {std::move(cur_stmts),
-                        cir::Goto{aw->cont_label}};
-                }
-                break;
-            }
-            case NodeKind::SetBang: {
-                auto *se = static_cast<const SetBangExpr *>(e);
-                auto stmts = std::move(aw->stmts);
-                stmts.push_back({se->var_name,
-                    expr_to_cexpr(se->expr.get())});
-                stmts.push_back({aw->var,
-                    cir::AtomExpr{cir::IntAtom{0}}});
-                blocks[aw->block_label] = {std::move(stmts),
-                    cir::Goto{aw->cont_label}};
-                break;
-            }
-            default: {
-                auto stmts = std::move(aw->stmts);
-                stmts.push_back({aw->var, expr_to_cexpr(e)});
-                blocks[aw->block_label] = {std::move(stmts),
-                                            cir::Goto{aw->cont_label}};
-                break;
-            }
-            }
+            handle_assign_work(*aw, worklist, blocks, lc);
         } else if (auto *ew = std::get_if<EffectWork>(&work)) {
-            const Expr *e = ew->expr;
-            auto stmts = std::move(ew->stmts);
-            peel_lets(e, stmts);
-
-            switch (e->kind()) {
-            case NodeKind::SetBang: {
-                auto *se = static_cast<const SetBangExpr *>(e);
-                stmts.push_back({se->var_name,
-                    expr_to_cexpr(se->expr.get())});
-                blocks[ew->block_label] = {std::move(stmts),
-                    cir::Goto{ew->cont_label}};
-                break;
-            }
-            case NodeKind::Begin: {
-                auto *beg = static_cast<const BeginExpr *>(e);
-                std::string cur_label = ew->block_label;
-                auto cur_stmts = std::move(stmts);
-                // invariant: cur_stmts collects simple assigns for cur_label
-                for (size_t i = 0; i < beg->exprs.size(); ++i) {
-                    const Expr *sub = beg->exprs[i].get();
-                    if (is_complex_init(sub)) {
-                        std::string next_l = fresh_label("seq");
-                        worklist.push_back(EffectWork{cur_label,
-                            std::move(cur_stmts), sub, next_l});
-                        cur_label = next_l;
-                        cur_stmts = {};
-                    } else if (sub->kind() == NodeKind::SetBang) {
-                        auto *ss = static_cast<const SetBangExpr *>(sub);
-                        cur_stmts.push_back({ss->var_name,
-                            expr_to_cexpr(ss->expr.get())});
-                    } else {
-                        std::string dummy = fresh_label("_");
-                        cur_stmts.push_back({dummy, expr_to_cexpr(sub)});
-                    }
-                }
-                blocks[cur_label] = {std::move(cur_stmts),
-                    cir::Goto{ew->cont_label}};
-                break;
-            }
-            case NodeKind::While: {
-                // Nested while in effect position
-                auto *we = static_cast<const WhileExpr *>(e);
-                std::string loop_entry = fresh_label("loop_entry");
-                std::string loop_body = fresh_label("loop_body");
-                std::string loop_exit = fresh_label("loop_exit");
-                blocks[ew->block_label] = {std::move(stmts),
-                                            cir::Goto{loop_entry}};
-                worklist.push_back(EffectWork{loop_body, {},
-                                               we->body.get(), loop_entry});
-                worklist.push_back(PredWork{we->cond.get(), loop_body,
-                                             loop_exit, loop_entry, {}});
-                blocks[loop_exit] = {{}, cir::Goto{ew->cont_label}};
-                break;
-            }
-            case NodeKind::If: {
-                // If in effect position
-                auto *ife = static_cast<const IfExpr *>(e);
-                std::string then_l = fresh_label("ethen");
-                std::string else_l = fresh_label("eelse");
-                worklist.push_back(EffectWork{then_l, {},
-                                               ife->then_branch.get(),
-                                               ew->cont_label});
-                worklist.push_back(EffectWork{else_l, {},
-                                               ife->else_branch.get(),
-                                               ew->cont_label});
-                worklist.push_back(PredWork{ife->cond.get(), then_l, else_l,
-                                             ew->block_label, std::move(stmts)});
-                break;
-            }
-            default: {
-                // Simple effect: evaluate and discard
-                std::string dummy = fresh_label("_");
-                stmts.push_back({dummy, expr_to_cexpr(e)});
-                blocks[ew->block_label] = {std::move(stmts),
-                    cir::Goto{ew->cont_label}};
-                break;
-            }
-            }
+            handle_effect_work(*ew, worklist, blocks, lc);
         }
     }
 }
 
 } // namespace
 
-/// @brief Explicate control: AST → C_If IR with basic blocks
-/// @requires prog.body != nullptr (after uniquify + RCO + shrink)
-/// @ensures result.blocks has "start" block and all generated blocks
+/// @brief Explicate control: AST -> C_Var IR with basic blocks
+/// @requires prog.body != nullptr (after shrink + uniquify + uncover_get + RCO)
+/// @ensures result.blocks has "start" block; tails are Goto/IfStmt/Return
 cir::CProgram explicate_control(const Program &prog) {
-    label_counter = 0;
+    int label_counter = 0;
     std::map<std::string, cir::BasicBlock> blocks;
     std::vector<Work> worklist;
 
     worklist.push_back(TailWork{"start", {}, prog.body.get()});
-    process_work(worklist, blocks);
+    process_work(worklist, blocks, label_counter);
 
     return cir::CProgram{std::move(blocks)};
 }
