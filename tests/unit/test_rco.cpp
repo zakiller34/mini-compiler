@@ -10,8 +10,7 @@
 
 /// Check whether an expression is atomic (IntExpr or VarExpr).
 static bool is_atomic(const Expr *e) {
-  return dynamic_cast<const IntExpr *>(e) != nullptr ||
-         dynamic_cast<const VarExpr *>(e) != nullptr;
+  return e->kind() == NodeKind::Int || e->kind() == NodeKind::Var;
 }
 
 /// Iteratively verify all operands of Unary/Binary are atomic.
@@ -27,17 +26,29 @@ static bool check_all_atomic(const Expr *root) {
     const auto *e = stack.back();
     stack.pop_back();
 
-    if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+    switch (e->kind()) {
+    case NodeKind::Unary: {
+      const auto *ue = static_cast<const UnaryExpr *>(e);
       if (!is_atomic(ue->operand.get())) {
         return false;
       }
-    } else if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Binary: {
+      const auto *be = static_cast<const BinaryExpr *>(e);
       if (!is_atomic(be->lhs.get()) || !is_atomic(be->rhs.get())) {
         return false;
       }
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Let: {
+      const auto *le = static_cast<const LetExpr *>(e);
       stack.push_back(le->body.get());
       stack.push_back(le->init.get());
+      break;
+    }
+    default:
+      break;
     }
     // Atoms and ReadExpr are fine
   }

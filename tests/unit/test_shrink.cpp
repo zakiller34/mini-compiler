@@ -15,21 +15,36 @@ static bool no_and_or(const Expr &expr) {
   while (!stack.empty()) {
     const auto *e = stack.back();
     stack.pop_back();
-    if (const auto *bin = dynamic_cast<const BinaryExpr *>(e)) {
+    switch (e->kind()) {
+    case NodeKind::Binary: {
+      const auto *bin = static_cast<const BinaryExpr *>(e);
       if (bin->op == BinaryOp::And || bin->op == BinaryOp::Or) {
         return false;
       }
       stack.push_back(bin->lhs.get());
       stack.push_back(bin->rhs.get());
-    } else if (const auto *un = dynamic_cast<const UnaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Unary: {
+      const auto *un = static_cast<const UnaryExpr *>(e);
       stack.push_back(un->operand.get());
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+      break;
+    }
+    case NodeKind::If: {
+      const auto *ife = static_cast<const IfExpr *>(e);
       stack.push_back(ife->cond.get());
       stack.push_back(ife->then_branch.get());
       stack.push_back(ife->else_branch.get());
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Let: {
+      const auto *le = static_cast<const LetExpr *>(e);
       stack.push_back(le->init.get());
       stack.push_back(le->body.get());
+      break;
+    }
+    default:
+      break;
     }
   }
   return true;
@@ -44,19 +59,34 @@ static int count_if(const Expr &expr) {
   while (!stack.empty()) {
     const auto *e = stack.back();
     stack.pop_back();
-    if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+    switch (e->kind()) {
+    case NodeKind::If: {
       ++count;
+      const auto *ife = static_cast<const IfExpr *>(e);
       stack.push_back(ife->cond.get());
       stack.push_back(ife->then_branch.get());
       stack.push_back(ife->else_branch.get());
-    } else if (const auto *bin = dynamic_cast<const BinaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Binary: {
+      const auto *bin = static_cast<const BinaryExpr *>(e);
       stack.push_back(bin->lhs.get());
       stack.push_back(bin->rhs.get());
-    } else if (const auto *un = dynamic_cast<const UnaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Unary: {
+      const auto *un = static_cast<const UnaryExpr *>(e);
       stack.push_back(un->operand.get());
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Let: {
+      const auto *le = static_cast<const LetExpr *>(e);
       stack.push_back(le->init.get());
       stack.push_back(le->body.get());
+      break;
+    }
+    default:
+      break;
     }
   }
   return count;
@@ -115,8 +145,8 @@ TEST(Shrink, NonLogicPassesThrough) {
   EXPECT_TRUE(no_and_or(*result->body));
   EXPECT_EQ(count_if(*result->body), 0);
   // Still a BinaryExpr with Add
-  const auto *bin = dynamic_cast<const BinaryExpr *>(result->body.get());
-  ASSERT_NE(bin, nullptr);
+  ASSERT_EQ(result->body->kind(), NodeKind::Binary);
+  const auto *bin = static_cast<const BinaryExpr *>(result->body.get());
   EXPECT_EQ(bin->op, BinaryOp::Add);
 }
 
@@ -134,7 +164,7 @@ TEST(Shrink, IfPassesThrough) {
 TEST(Shrink, IntLiteralUnchanged) {
   Program prog(std::make_unique<IntExpr>(42));
   auto result = shrink(prog);
-  const auto *i = dynamic_cast<const IntExpr *>(result->body.get());
-  ASSERT_NE(i, nullptr);
+  ASSERT_EQ(result->body->kind(), NodeKind::Int);
+  const auto *i = static_cast<const IntExpr *>(result->body.get());
   EXPECT_EQ(i->value, 42);
 }

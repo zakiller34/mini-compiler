@@ -22,15 +22,27 @@ static std::vector<std::string> collect_let_vars(const Expr *root) {
     const auto *e = stack.back();
     stack.pop_back();
 
-    if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+    switch (e->kind()) {
+    case NodeKind::Let: {
+      const auto *le = static_cast<const LetExpr *>(e);
       names.push_back(le->var);
       stack.push_back(le->body.get());
       stack.push_back(le->init.get());
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Unary: {
+      const auto *ue = static_cast<const UnaryExpr *>(e);
       stack.push_back(ue->operand.get());
-    } else if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
+      break;
+    }
+    case NodeKind::Binary: {
+      const auto *be = static_cast<const BinaryExpr *>(e);
       stack.push_back(be->rhs.get());
       stack.push_back(be->lhs.get());
+      break;
+    }
+    default:
+      break;
     }
     // IntExpr, VarExpr, ReadExpr are leaves
   }

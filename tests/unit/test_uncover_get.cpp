@@ -13,10 +13,9 @@ TEST(UncoverGet, NoSetBangNoChange) {
     Program prog(std::move(body));
     auto result = uncover_get(prog);
     // Body should be LetExpr with VarExpr in body
-    auto *le = dynamic_cast<LetExpr *>(result->body.get());
-    ASSERT_NE(le, nullptr);
-    auto *ve = dynamic_cast<VarExpr *>(le->body.get());
-    EXPECT_NE(ve, nullptr);
+    ASSERT_EQ(result->body->kind(), NodeKind::Let);
+    auto *le = static_cast<LetExpr *>(result->body.get());
+    EXPECT_EQ(le->body->kind(), NodeKind::Var);
 }
 
 TEST(UncoverGet, SetBangConvertsToGet) {
@@ -32,17 +31,15 @@ TEST(UncoverGet, SetBangConvertsToGet) {
     Program prog(std::move(body));
     auto result = uncover_get(prog);
 
-    auto *le = dynamic_cast<LetExpr *>(result->body.get());
-    ASSERT_NE(le, nullptr);
-    auto *beg = dynamic_cast<BeginExpr *>(le->body.get());
-    ASSERT_NE(beg, nullptr);
+    ASSERT_EQ(result->body->kind(), NodeKind::Let);
+    auto *le = static_cast<LetExpr *>(result->body.get());
+    ASSERT_EQ(le->body->kind(), NodeKind::Begin);
+    auto *beg = static_cast<BeginExpr *>(le->body.get());
     ASSERT_EQ(beg->exprs.size(), 2U);
     // Second expr should be GetExpr, not VarExpr
-    auto *ge = dynamic_cast<GetExpr *>(beg->exprs[1].get());
-    EXPECT_NE(ge, nullptr);
-    if (ge != nullptr) {
-        EXPECT_EQ(ge->name, "x");
-    }
+    ASSERT_EQ(beg->exprs[1]->kind(), NodeKind::Get);
+    auto *ge = static_cast<GetExpr *>(beg->exprs[1].get());
+    EXPECT_EQ(ge->name, "x");
 }
 
 TEST(UncoverGet, NonMutableVarUnchanged) {
@@ -61,15 +58,14 @@ TEST(UncoverGet, NonMutableVarUnchanged) {
     auto result = uncover_get(prog);
 
     // Navigate to the begin's second expr
-    auto *outer = dynamic_cast<LetExpr *>(result->body.get());
-    ASSERT_NE(outer, nullptr);
-    auto *inner = dynamic_cast<LetExpr *>(outer->body.get());
-    ASSERT_NE(inner, nullptr);
-    auto *beg = dynamic_cast<BeginExpr *>(inner->body.get());
-    ASSERT_NE(beg, nullptr);
+    ASSERT_EQ(result->body->kind(), NodeKind::Let);
+    auto *outer = static_cast<LetExpr *>(result->body.get());
+    ASSERT_EQ(outer->body->kind(), NodeKind::Let);
+    auto *inner = static_cast<LetExpr *>(outer->body.get());
+    ASSERT_EQ(inner->body->kind(), NodeKind::Begin);
+    auto *beg = static_cast<BeginExpr *>(inner->body.get());
     // y should still be VarExpr
-    auto *ve = dynamic_cast<VarExpr *>(beg->exprs[1].get());
-    EXPECT_NE(ve, nullptr);
+    EXPECT_EQ(beg->exprs[1]->kind(), NodeKind::Var);
 }
 
 TEST(UncoverGet, WhileBodyConverted) {
@@ -92,13 +88,12 @@ TEST(UncoverGet, WhileBodyConverted) {
     auto result = uncover_get(prog);
 
     // Navigate to while condition
-    auto *le = dynamic_cast<LetExpr *>(result->body.get());
-    ASSERT_NE(le, nullptr);
-    auto *we = dynamic_cast<WhileExpr *>(le->body.get());
-    ASSERT_NE(we, nullptr);
-    auto *cmp = dynamic_cast<BinaryExpr *>(we->cond.get());
-    ASSERT_NE(cmp, nullptr);
+    ASSERT_EQ(result->body->kind(), NodeKind::Let);
+    auto *le = static_cast<LetExpr *>(result->body.get());
+    ASSERT_EQ(le->body->kind(), NodeKind::While);
+    auto *we = static_cast<WhileExpr *>(le->body.get());
+    ASSERT_EQ(we->cond->kind(), NodeKind::Binary);
+    auto *cmp = static_cast<BinaryExpr *>(we->cond.get());
     // lhs of comparison should be GetExpr("i")
-    auto *ge = dynamic_cast<GetExpr *>(cmp->lhs.get());
-    EXPECT_NE(ge, nullptr);
+    EXPECT_EQ(cmp->lhs->kind(), NodeKind::Get);
 }

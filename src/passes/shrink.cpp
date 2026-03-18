@@ -30,21 +30,31 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
     const Expr *e = ef.expr;
-    if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
-        results.push_back(std::make_unique<IntExpr>(ie->value));
-    } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
-        results.push_back(std::make_unique<BoolExpr>(be->value));
-    } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
-        results.push_back(std::make_unique<VarExpr>(ve->name));
-    } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+    switch (e->kind()) {
+    case NodeKind::Int:
+        results.push_back(std::make_unique<IntExpr>(
+            static_cast<const IntExpr *>(e)->value));
+        break;
+    case NodeKind::Bool:
+        results.push_back(std::make_unique<BoolExpr>(
+            static_cast<const BoolExpr *>(e)->value));
+        break;
+    case NodeKind::Var:
+        results.push_back(std::make_unique<VarExpr>(
+            static_cast<const VarExpr *>(e)->name));
+        break;
+    case NodeKind::Read:
         results.push_back(std::make_unique<ReadExpr>());
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+        break;
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
-    } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Binary: {
+        auto *bine = static_cast<const BinaryExpr *>(e);
         if (bine->op == BinaryOp::And || bine->op == BinaryOp::Or) {
-            // Desugar: And(a,b) → If(a, b, false)
-            //          Or(a,b)  → If(a, true, b)
             if (bine->op == BinaryOp::And) {
                 stack.push_back(IfBuildCond{bine->rhs.get(), nullptr});
                 stack.push_back(EvalFrame{bine->lhs.get()});
@@ -56,20 +66,35 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
             stack.push_back(BinBuildLhs{bine->op, bine->rhs.get()});
             stack.push_back(EvalFrame{bine->lhs.get()});
         }
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get()});
         stack.push_back(EvalFrame{ife->cond.get()});
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get()});
-    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
         stack.push_back(WhileBuildCond{we->body.get()});
         stack.push_back(EvalFrame{we->cond.get()});
-    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
         stack.push_back(SetBangBuild{se->var_name});
         stack.push_back(EvalFrame{se->expr.get()});
-    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
         if (beg->exprs.empty()) {
             results.push_back(std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -82,10 +107,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                                         beg->exprs.size()});
             stack.push_back(EvalFrame{beg->exprs[0].get()});
         }
-    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Void:
         results.push_back(std::make_unique<VoidExpr>());
-    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
-        results.push_back(std::make_unique<GetExpr>(ge->name));
+        break;
+    case NodeKind::Get:
+        results.push_back(std::make_unique<GetExpr>(
+            static_cast<const GetExpr *>(e)->name));
+        break;
     }
 }
 

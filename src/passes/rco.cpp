@@ -39,9 +39,8 @@ struct Result {
 
 void atomize(Result &res, Need need, int &tmp_counter) {
     if (need != Need::Atom) return;
-    bool is_atom = (dynamic_cast<IntExpr *>(res.expr.get()) != nullptr) ||
-                   (dynamic_cast<BoolExpr *>(res.expr.get()) != nullptr) ||
-                   (dynamic_cast<VarExpr *>(res.expr.get()) != nullptr);
+    auto k = res.expr->kind();
+    bool is_atom = (k == NodeKind::Int || k == NodeKind::Bool || k == NodeKind::Var);
     if (is_atom) return;
     std::string tmp = "tmp." + std::to_string(tmp_counter++);
     res.bindings.push_back({tmp, std::move(res.expr)});
@@ -62,40 +61,64 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<Result> &results, int &tmp_counter) {
     const Expr *e = ef.expr;
 
-    if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
-        results.push_back({std::make_unique<IntExpr>(ie->value), {}});
-    } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
-        results.push_back({std::make_unique<BoolExpr>(be->value), {}});
-    } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
-        results.push_back({std::make_unique<VarExpr>(ve->name), {}});
-    } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+    switch (e->kind()) {
+    case NodeKind::Int:
+        results.push_back({std::make_unique<IntExpr>(
+            static_cast<const IntExpr *>(e)->value), {}});
+        break;
+    case NodeKind::Bool:
+        results.push_back({std::make_unique<BoolExpr>(
+            static_cast<const BoolExpr *>(e)->value), {}});
+        break;
+    case NodeKind::Var:
+        results.push_back({std::make_unique<VarExpr>(
+            static_cast<const VarExpr *>(e)->name), {}});
+        break;
+    case NodeKind::Read: {
         Result res = {std::make_unique<ReadExpr>(), {}};
         atomize(res, ef.need, tmp_counter);
         results.push_back(std::move(res));
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryBuild{ue->op, ef.need});
         stack.push_back(EvalFrame{ue->operand.get(), Need::Atom});
-    } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Binary: {
+        auto *bine = static_cast<const BinaryExpr *>(e);
         stack.push_back(BinBuildLhs{bine->op, bine->rhs.get(), ef.need});
         stack.push_back(EvalFrame{bine->lhs.get(), Need::Atom});
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
-        // If: condition in Need::Expr, branches in Need::Expr
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get(), ef.need});
         stack.push_back(EvalFrame{ife->cond.get(), Need::Expr});
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get(), Need::Expr});
-    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
-        // while is complex, never atomized — branches in Need::Expr
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
         stack.push_back(WhileBuildCond{we->body.get(), ef.need});
         stack.push_back(EvalFrame{we->cond.get(), Need::Expr});
-    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
-        // set! is complex
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
         stack.push_back(SetBangBuild{se->var_name, ef.need});
         stack.push_back(EvalFrame{se->expr.get(), Need::Expr});
-    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
-        // begin is complex
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
         if (beg->exprs.empty()) {
             results.push_back({std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}), {}});
@@ -108,12 +131,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                                         beg->exprs.size(), ef.need});
             stack.push_back(EvalFrame{beg->exprs[0].get(), Need::Expr});
         }
-    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
-        // void is atomic
+        break;
+    }
+    case NodeKind::Void:
         results.push_back({std::make_unique<VoidExpr>(), {}});
-    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
-        // get! is atomic (like VarExpr)
-        results.push_back({std::make_unique<GetExpr>(ge->name), {}});
+        break;
+    case NodeKind::Get:
+        results.push_back({std::make_unique<GetExpr>(
+            static_cast<const GetExpr *>(e)->name), {}});
+        break;
     }
 }
 

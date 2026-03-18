@@ -8,10 +8,17 @@
 enum class UnaryOp { Neg, Not };
 enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
+enum class NodeKind {
+  Int, Bool, Var, Read, Unary, Binary, If, Let,
+  While, SetBang, Begin, Void, Get
+};
+
 /// Base class for all expressions in L_While.
 class Expr {
 public:
   virtual ~Expr() = default;
+
+  virtual NodeKind kind() const = 0;
 
   /// @brief S-expression pretty-printer
   /// @ensures result is valid S-expr string
@@ -22,6 +29,7 @@ class IntExpr : public Expr {
 public:
   int64_t value;
   explicit IntExpr(int64_t v) : value(v) {}
+  NodeKind kind() const override { return NodeKind::Int; }
   std::string dump() const override;
 };
 
@@ -29,6 +37,7 @@ class BoolExpr : public Expr {
 public:
   bool value;
   explicit BoolExpr(bool v) : value(v) {}
+  NodeKind kind() const override { return NodeKind::Bool; }
   std::string dump() const override;
 };
 
@@ -36,11 +45,13 @@ class VarExpr : public Expr {
 public:
   std::string name;
   explicit VarExpr(std::string n) : name(std::move(n)) {}
+  NodeKind kind() const override { return NodeKind::Var; }
   std::string dump() const override;
 };
 
 class ReadExpr : public Expr {
 public:
+  NodeKind kind() const override { return NodeKind::Read; }
   std::string dump() const override;
 };
 
@@ -50,6 +61,7 @@ public:
   std::unique_ptr<Expr> operand;
   UnaryExpr(UnaryOp o, std::unique_ptr<Expr> e)
       : op(o), operand(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::Unary; }
   std::string dump() const override;
 };
 
@@ -60,6 +72,7 @@ public:
   std::unique_ptr<Expr> rhs;
   BinaryExpr(BinaryOp o, std::unique_ptr<Expr> l, std::unique_ptr<Expr> r)
       : op(o), lhs(std::move(l)), rhs(std::move(r)) {}
+  NodeKind kind() const override { return NodeKind::Binary; }
   std::string dump() const override;
 };
 
@@ -72,6 +85,7 @@ public:
          std::unique_ptr<Expr> e)
       : cond(std::move(c)), then_branch(std::move(t)),
         else_branch(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::If; }
   std::string dump() const override;
 };
 
@@ -82,6 +96,7 @@ public:
   std::unique_ptr<Expr> body;
   LetExpr(std::string v, std::unique_ptr<Expr> i, std::unique_ptr<Expr> b)
       : var(std::move(v)), init(std::move(i)), body(std::move(b)) {}
+  NodeKind kind() const override { return NodeKind::Let; }
   std::string dump() const override;
 };
 
@@ -91,6 +106,7 @@ public:
   std::unique_ptr<Expr> body;
   WhileExpr(std::unique_ptr<Expr> c, std::unique_ptr<Expr> b)
       : cond(std::move(c)), body(std::move(b)) {}
+  NodeKind kind() const override { return NodeKind::While; }
   std::string dump() const override;
 };
 
@@ -100,6 +116,7 @@ public:
   std::unique_ptr<Expr> expr;
   SetBangExpr(std::string v, std::unique_ptr<Expr> e)
       : var_name(std::move(v)), expr(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::SetBang; }
   std::string dump() const override;
 };
 
@@ -108,11 +125,13 @@ public:
   std::vector<std::unique_ptr<Expr>> exprs;
   explicit BeginExpr(std::vector<std::unique_ptr<Expr>> es)
       : exprs(std::move(es)) {}
+  NodeKind kind() const override { return NodeKind::Begin; }
   std::string dump() const override;
 };
 
 class VoidExpr : public Expr {
 public:
+  NodeKind kind() const override { return NodeKind::Void; }
   std::string dump() const override;
 };
 
@@ -121,6 +140,7 @@ class GetExpr : public Expr {
 public:
   std::string name;
   explicit GetExpr(std::string n) : name(std::move(n)) {}
+  NodeKind kind() const override { return NodeKind::Get; }
   std::string dump() const override;
 };
 

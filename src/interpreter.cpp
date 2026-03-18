@@ -37,20 +37,30 @@ bool as_bool(const Value &v) { return std::get<bool>(v); }
 /// @requires e != nullptr
 void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
                std::vector<Value> &values, std::istream &in) {
-    if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
-        values.push_back(ie->value);
-    } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
-        values.push_back(be->value);
-    } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
-        values.push_back(env.at(ve->name));
-    } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+    switch (e->kind()) {
+    case NodeKind::Int:
+        values.push_back(static_cast<const IntExpr *>(e)->value);
+        break;
+    case NodeKind::Bool:
+        values.push_back(static_cast<const BoolExpr *>(e)->value);
+        break;
+    case NodeKind::Var:
+        values.push_back(env.at(static_cast<const VarExpr *>(e)->name));
+        break;
+    case NodeKind::Read: {
         int64_t val = 0;
         in >> val;
         values.push_back(val);
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryFrame{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
-    } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Binary: {
+        auto *bine = static_cast<const BinaryExpr *>(e);
         if (bine->op == BinaryOp::And || bine->op == BinaryOp::Or) {
             stack.push_back(IfCondFrame{
                 bine->op == BinaryOp::And ? bine->rhs.get() : nullptr,
@@ -60,20 +70,35 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
             stack.push_back(BinLhsFrame{bine->op, bine->rhs.get()});
             stack.push_back(EvalFrame{bine->lhs.get()});
         }
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
         stack.push_back(IfCondFrame{ife->then_branch.get(),
                                      ife->else_branch.get()});
         stack.push_back(EvalFrame{ife->cond.get()});
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
         stack.push_back(LetBindFrame{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get()});
-    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
         stack.push_back(WhileCondFrame{we->cond.get(), we->body.get()});
         stack.push_back(EvalFrame{we->cond.get()});
-    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
         stack.push_back(SetBangFrame{se->var_name});
         stack.push_back(EvalFrame{se->expr.get()});
-    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
         if (beg->exprs.empty()) {
             values.push_back(std::monostate{});
         } else {
@@ -84,10 +109,14 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
             stack.push_back(BeginFrame{std::move(remaining)});
             stack.push_back(EvalFrame{beg->exprs[0].get()});
         }
-    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Void:
         values.push_back(std::monostate{});
-    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
-        values.push_back(env.at(ge->name));
+        break;
+    case NodeKind::Get:
+        values.push_back(env.at(static_cast<const GetExpr *>(e)->name));
+        break;
     }
 }
 

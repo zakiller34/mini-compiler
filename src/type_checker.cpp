@@ -74,42 +74,68 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     const Expr *e = ef.expr;
     const auto &env = ef.env;
 
-    if (dynamic_cast<const IntExpr *>(e) != nullptr) {
+    switch (e->kind()) {
+    case NodeKind::Int:
         types.push_back(Type::Int);
-    } else if (dynamic_cast<const BoolExpr *>(e) != nullptr) {
+        break;
+    case NodeKind::Bool:
         types.push_back(Type::Bool);
-    } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
+        break;
+    case NodeKind::Var: {
+        auto *ve = static_cast<const VarExpr *>(e);
         auto it = env.find(ve->name);
         if (it == env.end()) {
             throw TypeError("unbound variable: " + ve->name);
         }
         types.push_back(it->second);
-    } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Read:
         types.push_back(Type::Int);
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+        break;
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryFrame{ue->op});
         stack.push_back(EvalFrame{ue->operand.get(), env});
-    } else if (const auto *be = dynamic_cast<const BinaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Binary: {
+        auto *be = static_cast<const BinaryExpr *>(e);
         stack.push_back(BinLhsFrame{be->op, be->rhs.get(), env});
         stack.push_back(EvalFrame{be->lhs.get(), env});
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
         stack.push_back(IfCondFrame{ife->then_branch.get(),
                                      ife->else_branch.get(), env});
         stack.push_back(EvalFrame{ife->cond.get(), env});
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
         stack.push_back(LetBindFrame{le->var, le->body.get(), env});
         stack.push_back(EvalFrame{le->init.get(), env});
-    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
         stack.push_back(WhileCondFrame{we->body.get(), env});
         stack.push_back(EvalFrame{we->cond.get(), env});
-    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
         auto it = env.find(se->var_name);
         if (it == env.end()) {
             throw TypeError("unbound variable in set!: " + se->var_name);
         }
         stack.push_back(SetBangFrame{se->var_name, env});
         stack.push_back(EvalFrame{se->expr.get(), env});
-    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
         if (beg->exprs.empty()) {
             types.push_back(Type::Void);
         } else {
@@ -120,14 +146,20 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
             stack.push_back(BeginFrame{std::move(remaining), env});
             stack.push_back(EvalFrame{beg->exprs[0].get(), env});
         }
-    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Void:
         types.push_back(Type::Void);
-    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        break;
+    case NodeKind::Get: {
+        auto *ge = static_cast<const GetExpr *>(e);
         auto it = env.find(ge->name);
         if (it == env.end()) {
             throw TypeError("unbound variable: " + ge->name);
         }
         types.push_back(it->second);
+        break;
+    }
     }
 }
 

@@ -35,39 +35,67 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     const Expr *e = ef.expr;
     const auto &env = ef.env;
 
-    if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
-        results.push_back(std::make_unique<IntExpr>(ie->value));
-    } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
-        results.push_back(std::make_unique<BoolExpr>(be->value));
-    } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
+    switch (e->kind()) {
+    case NodeKind::Int:
+        results.push_back(std::make_unique<IntExpr>(
+            static_cast<const IntExpr *>(e)->value));
+        break;
+    case NodeKind::Bool:
+        results.push_back(std::make_unique<BoolExpr>(
+            static_cast<const BoolExpr *>(e)->value));
+        break;
+    case NodeKind::Var: {
+        auto *ve = static_cast<const VarExpr *>(e);
         auto it = env.find(ve->name);
         std::string name = (it != env.end()) ? it->second : ve->name;
         results.push_back(std::make_unique<VarExpr>(name));
-    } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Read:
         results.push_back(std::make_unique<ReadExpr>());
-    } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
+        break;
+    case NodeKind::Unary: {
+        auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get(), env});
-    } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Binary: {
+        auto *bine = static_cast<const BinaryExpr *>(e);
         stack.push_back(BinBuildLhs{bine->op, bine->rhs.get(), env});
         stack.push_back(EvalFrame{bine->lhs.get(), env});
-    } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
+        break;
+    }
+    case NodeKind::If: {
+        auto *ife = static_cast<const IfExpr *>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get(), env});
         stack.push_back(EvalFrame{ife->cond.get(), env});
-    } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
         std::string new_name = le->var + "." + std::to_string(counter++);
         stack.push_back(LetBuildInit{le->var, new_name, le->body.get(), env});
         stack.push_back(EvalFrame{le->init.get(), env});
-    } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+        break;
+    }
+    case NodeKind::While: {
+        auto *we = static_cast<const WhileExpr *>(e);
         stack.push_back(WhileBuildCond{we->body.get(), env});
         stack.push_back(EvalFrame{we->cond.get(), env});
-    } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+        break;
+    }
+    case NodeKind::SetBang: {
+        auto *se = static_cast<const SetBangExpr *>(e);
         auto it = env.find(se->var_name);
         std::string name = (it != env.end()) ? it->second : se->var_name;
         stack.push_back(SetBangBuild{name});
         stack.push_back(EvalFrame{se->expr.get(), env});
-    } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+        break;
+    }
+    case NodeKind::Begin: {
+        auto *beg = static_cast<const BeginExpr *>(e);
         if (beg->exprs.empty()) {
             results.push_back(std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -80,12 +108,18 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                                         beg->exprs.size()});
             stack.push_back(EvalFrame{beg->exprs[0].get(), env});
         }
-    } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+        break;
+    }
+    case NodeKind::Void:
         results.push_back(std::make_unique<VoidExpr>());
-    } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
+        break;
+    case NodeKind::Get: {
+        auto *ge = static_cast<const GetExpr *>(e);
         auto it = env.find(ge->name);
         std::string name = (it != env.end()) ? it->second : ge->name;
         results.push_back(std::make_unique<GetExpr>(name));
+        break;
+    }
     }
 }
 

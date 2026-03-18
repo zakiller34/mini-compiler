@@ -82,43 +82,63 @@ void push_let(const LetExpr *le, std::string &out,
 /// @brief Dispatch a single Visit: either append leaf or push children
 /// @requires e != nullptr
 void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
-  if (const auto *ie = dynamic_cast<const IntExpr *>(e)) {
-    out += std::to_string(ie->value);
-  } else if (const auto *be = dynamic_cast<const BoolExpr *>(e)) {
-    out += be->value ? "true" : "false";
-  } else if (const auto *ve = dynamic_cast<const VarExpr *>(e)) {
-    out += ve->name;
-  } else if (dynamic_cast<const ReadExpr *>(e) != nullptr) {
+  switch (e->kind()) {
+  case NodeKind::Int:
+    out += std::to_string(static_cast<const IntExpr *>(e)->value);
+    break;
+  case NodeKind::Bool:
+    out += static_cast<const BoolExpr *>(e)->value ? "true" : "false";
+    break;
+  case NodeKind::Var:
+    out += static_cast<const VarExpr *>(e)->name;
+    break;
+  case NodeKind::Read:
     out += "(read)";
-  } else if (const auto *ue = dynamic_cast<const UnaryExpr *>(e)) {
-    push_unary(ue, out, tasks);
-  } else if (const auto *bine = dynamic_cast<const BinaryExpr *>(e)) {
-    push_binary(bine, out, tasks);
-  } else if (const auto *ife = dynamic_cast<const IfExpr *>(e)) {
-    push_if(ife, out, tasks);
-  } else if (const auto *le = dynamic_cast<const LetExpr *>(e)) {
-    push_let(le, out, tasks);
-  } else if (const auto *we = dynamic_cast<const WhileExpr *>(e)) {
+    break;
+  case NodeKind::Unary:
+    push_unary(static_cast<const UnaryExpr *>(e), out, tasks);
+    break;
+  case NodeKind::Binary:
+    push_binary(static_cast<const BinaryExpr *>(e), out, tasks);
+    break;
+  case NodeKind::If:
+    push_if(static_cast<const IfExpr *>(e), out, tasks);
+    break;
+  case NodeKind::Let:
+    push_let(static_cast<const LetExpr *>(e), out, tasks);
+    break;
+  case NodeKind::While: {
+    auto *we = static_cast<const WhileExpr *>(e);
     out += "(while ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, we->body.get(), ""});
     tasks.push_back({Action::Append, nullptr, " "});
     tasks.push_back({Action::Visit, we->cond.get(), ""});
-  } else if (const auto *se = dynamic_cast<const SetBangExpr *>(e)) {
+    break;
+  }
+  case NodeKind::SetBang: {
+    auto *se = static_cast<const SetBangExpr *>(e);
     out += "(set! " + se->var_name + " ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, se->expr.get(), ""});
-  } else if (const auto *beg = dynamic_cast<const BeginExpr *>(e)) {
+    break;
+  }
+  case NodeKind::Begin: {
+    auto *beg = static_cast<const BeginExpr *>(e);
     out += "(begin";
     tasks.push_back({Action::Append, nullptr, ")"});
     for (int i = static_cast<int>(beg->exprs.size()) - 1; i >= 0; --i) {
       tasks.push_back({Action::Visit, beg->exprs[i].get(), ""});
       tasks.push_back({Action::Append, nullptr, " "});
     }
-  } else if (dynamic_cast<const VoidExpr *>(e) != nullptr) {
+    break;
+  }
+  case NodeKind::Void:
     out += "(void)";
-  } else if (const auto *ge = dynamic_cast<const GetExpr *>(e)) {
-    out += "(get! " + ge->name + ")";
+    break;
+  case NodeKind::Get:
+    out += "(get! " + static_cast<const GetExpr *>(e)->name + ")";
+    break;
   }
 }
 
