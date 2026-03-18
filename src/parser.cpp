@@ -6,8 +6,12 @@
 
 Parser::Parser(Lexer &lex) : lex_(lex), cur_(lex_.next()) {}
 
+/// @brief Consume current token, advance to next
+/// @modifies cur_
 void Parser::advance() { cur_ = lex_.next(); }
 
+/// @brief Assert current token matches kind, then advance
+/// @requires cur_.kind == kind (throws ParseError otherwise)
 void Parser::expect(TokenKind kind, const std::string &msg) {
     if (cur_.kind != kind) {
         throw ParseError("expected " + msg + ", got '" + cur_.text + "'");
@@ -15,6 +19,8 @@ void Parser::expect(TokenKind kind, const std::string &msg) {
     advance();
 }
 
+/// @brief Parse full program: single expr followed by EOF
+/// @ensures result->body is the parsed AST
 std::unique_ptr<Program> Parser::parse_program() {
     auto body = parse_expr();
     if (cur_.kind != TokenKind::Eof) {

@@ -30,6 +30,9 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            WhileBuildCond, WhileBuildBody,
                            SetBangBuild, BeginBuild>;
 
+/// @brief Evaluate leaf or push continuation frames for uniquify
+/// @requires ef.expr != nullptr
+/// @modifies stack, results, counter
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results, int &counter) {
     const Expr *e = ef.expr;
@@ -123,6 +126,9 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     }
 }
 
+/// @brief Process continuation frame, combining uniquified children
+/// @requires results has enough values for the continuation
+/// @modifies stack, results
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
@@ -189,12 +195,16 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
+/// @brief Rename all let-bound variables to unique names (var.N)
+/// @requires prog.body != nullptr
+/// @ensures all let-bound names in result are globally unique
 std::unique_ptr<Program> uniquify(const Program &prog) {
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
     int counter = 1;
     stack.push_back(EvalFrame{prog.body.get(), {}});
 
+    // decreases: stack.size()
     while (!stack.empty()) {
         auto frame = std::move(stack.back());
         stack.pop_back();

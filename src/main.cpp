@@ -20,6 +20,9 @@
 #include <memory>
 #include <string>
 
+/// @brief Open and parse .mc file into AST
+/// @requires filename is a readable .mc file path
+/// @ensures result != nullptr on success, nullptr on file error
 std::unique_ptr<Program> parse_file(const std::string &filename) {
     std::ifstream ifs(filename);
     if (!ifs) {
@@ -31,6 +34,9 @@ std::unique_ptr<Program> parse_file(const std::string &filename) {
     return parser.parse_program();
 }
 
+/// @brief Full compilation pipeline: parse -> type check -> passes -> emit x86
+/// @requires src_file is a valid .mc file
+/// @ensures out_file contains AT&T x86-64 assembly on success (returns 0)
 int compile(const std::string &src_file, const std::string &out_file) {
     auto prog = parse_file(src_file);
     if (prog == nullptr) return 1;
@@ -61,6 +67,9 @@ int compile(const std::string &src_file, const std::string &out_file) {
     return 0;
 }
 
+/// @brief Parse, type-check, and interpret program; print result to stdout
+/// @requires src_file is a valid .mc file
+/// @ensures prints result value to stdout, returns 0 on success
 int run_interpret(const std::string &src_file,
                   const std::string &input_file) {
     auto prog = parse_file(src_file);
@@ -96,6 +105,8 @@ int run_interpret(const std::string &src_file,
     return 0;
 }
 
+/// @brief CLI entry point: compile or interpret .mc files
+/// @requires argc >= 2
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         std::cerr << "usage: mc <input.mc> -o <output.s>\n";

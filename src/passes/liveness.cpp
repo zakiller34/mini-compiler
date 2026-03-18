@@ -6,6 +6,8 @@
 
 namespace {
 
+/// @brief Extract var name from arg if it is a VarArg
+/// @modifies out — inserts var name if present
 void var_from_arg(const x86::Arg &a, std::set<std::string> &out) {
     if (const auto *v = std::get_if<x86::VarArg>(&a)) {
         out.insert(v->name);
@@ -14,6 +16,8 @@ void var_from_arg(const x86::Arg &a, std::set<std::string> &out) {
 
 } // namespace
 
+/// @brief Collect variables read by an x86 instruction
+/// @ensures result contains all VarArg names in read positions
 std::set<std::string> instr_reads(const x86::Instr &instr) {
     std::set<std::string> result;
     if (const auto *a = std::get_if<x86::Addq>(&instr)) {
@@ -37,6 +41,8 @@ std::set<std::string> instr_reads(const x86::Instr &instr) {
     return result;
 }
 
+/// @brief Collect variables written by an x86 instruction
+/// @ensures result contains all VarArg names in write positions
 std::set<std::string> instr_writes(const x86::Instr &instr) {
     std::set<std::string> result;
     if (const auto *a = std::get_if<x86::Addq>(&instr)) {

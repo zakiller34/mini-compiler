@@ -37,6 +37,8 @@ struct Result {
     std::vector<Binding> bindings;
 };
 
+/// @brief If need==Atom and expr non-atomic, bind to fresh tmp
+/// @modifies res.bindings, res.expr, tmp_counter
 void atomize(Result &res, Need need, int &tmp_counter) {
     if (need != Need::Atom) return;
     auto k = res.expr->kind();
@@ -47,8 +49,13 @@ void atomize(Result &res, Need need, int &tmp_counter) {
     res.expr = std::make_unique<VarExpr>(tmp);
 }
 
+/// @brief Wrap expr in nested let-bindings (innermost last)
+/// @requires expr != nullptr
+/// @ensures result is let b[0] in let b[1] in ... expr
 std::unique_ptr<Expr> wrap_bindings(std::unique_ptr<Expr> expr,
                                      std::vector<Binding> &bindings) {
+    // invariant: expr wrapped with bindings[i+1..] applied
+    // decreases: i
     for (int i = static_cast<int>(bindings.size()) - 1; i >= 0; --i) {
         expr = std::make_unique<LetExpr>(
             std::move(bindings[i].first), std::move(bindings[i].second),
@@ -57,6 +64,9 @@ std::unique_ptr<Expr> wrap_bindings(std::unique_ptr<Expr> expr,
     return expr;
 }
 
+/// @brief Evaluate leaf or push continuation frames for RCO
+/// @requires ef.expr != nullptr
+/// @modifies stack, results, tmp_counter
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<Result> &results, int &tmp_counter) {
     const Expr *e = ef.expr;
@@ -143,6 +153,9 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     }
 }
 
+/// @brief Process continuation frame, combining child results for RCO
+/// @requires results has enough values for the continuation
+/// @modifies stack, results, tmp_counter
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<Result> &results, int &tmp_counter) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
@@ -240,12 +253,16 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
+/// @brief Remove complex operands: all operator args become atomic
+/// @requires prog.body != nullptr
+/// @ensures result has only atomic (Int/Bool/Var) operands in Unary/Binary
 std::unique_ptr<Program> remove_complex_operands(const Program &prog) {
     std::vector<Frame> stack;
     std::vector<Result> results;
     int tmp_counter = 0;
     stack.push_back(EvalFrame{prog.body.get(), Need::Expr});
 
+    // decreases: stack.size()
     while (!stack.empty()) {
         auto frame = std::move(stack.back());
         stack.pop_back();

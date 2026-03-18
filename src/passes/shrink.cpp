@@ -27,6 +27,9 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            WhileBuildCond, WhileBuildBody,
                            SetBangBuild, BeginBuild>;
 
+/// @brief Evaluate leaf or push continuation frames for shrink
+/// @requires ef.expr != nullptr
+/// @modifies stack, results
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
     const Expr *e = ef.expr;
@@ -119,6 +122,9 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     }
 }
 
+/// @brief Process continuation frame for shrink (And/Or desugaring)
+/// @requires results has enough values for the continuation
+/// @modifies stack, results
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
@@ -213,6 +219,9 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
+/// @brief Desugar And/Or into If expressions
+/// @requires prog.body != nullptr
+/// @ensures result has no And/Or nodes; replaced by If(cond, rhs, #f)/#t
 std::unique_ptr<Program> shrink(const Program &prog) {
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;

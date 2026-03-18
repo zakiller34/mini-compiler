@@ -213,6 +213,9 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
 
 } // namespace
 
+/// @brief Interpret program, returning final value
+/// @requires prog.body != nullptr
+/// @ensures result is the value of prog.body under empty env
 Value interpret(const Program &prog, std::istream &in) {
     std::vector<Frame> stack;
     std::vector<Value> values;

@@ -94,6 +94,9 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            WhileBuildCond, WhileBuildBody,
                            SetBangBuild, BeginBuild>;
 
+/// @brief Evaluate leaf or push continuation frames for uncover_get
+/// @requires ef.expr != nullptr
+/// @modifies stack, results
 void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
                std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
@@ -182,6 +185,9 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
     }
 }
 
+/// @brief Process continuation frame, combining child results
+/// @requires results has enough values for the continuation
+/// @modifies stack, results
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
@@ -249,6 +255,9 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
+/// @brief Replace VarExpr with GetExpr for mutable variables (set! targets)
+/// @requires prog.body != nullptr
+/// @ensures result structurally identical except Var(v)->Get(v) for mutable v
 std::unique_ptr<Program> uncover_get(const Program &prog) {
     auto mutable_vars = collect_mutable_vars(prog.body.get());
 
