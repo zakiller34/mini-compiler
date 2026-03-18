@@ -1,10 +1,9 @@
 #pragma once
 
 #include "ast.h"
+#include "type.h"
 
 #include <stdexcept>
-
-enum class Type { Int, Bool, Void };
 
 class TypeError : public std::runtime_error {
 public:
@@ -14,4 +13,4 @@ public:
 /// @brief Type-check program, return type of body
 /// @requires prog.body != nullptr
 /// @ensures returns type if well-typed, throws TypeError otherwise
-Type type_check(const Program &prog);
+TypePtr type_check(const Program &prog);

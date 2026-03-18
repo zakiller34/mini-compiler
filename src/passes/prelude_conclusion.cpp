@@ -21,6 +21,11 @@ ordered_callee_saved(const std::set<x86::Reg> &used) {
     return result;
 }
 
+/// @brief Check if program uses any tuple/GC features
+bool needs_gc(const x86::X86Program &prog) {
+    return prog.root_stack_space > 0 || !prog.var_types.empty();
+}
+
 } // namespace
 
 /// @brief Generate main prelude and conclusion for x86 program
@@ -30,6 +35,7 @@ ordered_callee_saved(const std::set<x86::Reg> &used) {
 x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
     x86::X86Program result = prog;
     auto callee_regs = ordered_callee_saved(prog.used_callee_saved);
+    bool gc = needs_gc(prog);
 
     // main: push rbp, mov rsp->rbp, push callee-saved, sub stack_space, jmp
     x86::Block main_block;
@@ -48,6 +54,30 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
             x86::Subq{x86::Imm{prog.stack_space},
                        x86::RegArg{x86::Reg::Rsp}});
     }
+
+    if (gc) {
+        // Initialize GC: movq $16384, %rdi; movq $65536, %rsi; callq initialize
+        main_block.instrs.push_back(
+            x86::Movq{x86::Imm{16384}, x86::RegArg{x86::Reg::Rdi}});
+        main_block.instrs.push_back(
+            x86::Movq{x86::Imm{65536}, x86::RegArg{x86::Reg::Rsi}});
+        main_block.instrs.push_back(x86::Callq{"initialize", 2});
+
+        // Setup root stack pointer: movq rootstack_begin(%rip), %r15
+        main_block.instrs.push_back(
+            x86::Movq{x86::GlobalArg{"rootstack_begin"},
+                       x86::RegArg{x86::Reg::R15}});
+
+        // Zero root stack slots
+        int64_t num_slots = prog.root_stack_space / 8;
+        // invariant: slots [0..i) zeroed
+        for (int64_t i = 0; i < num_slots; ++i) {
+            main_block.instrs.push_back(
+                x86::Movq{x86::Imm{0},
+                           x86::Deref{x86::Reg::R15, 8 * i}});
+        }
+    }
+
     main_block.instrs.push_back(x86::Jmp{"start"});
     result.blocks["main"] = std::move(main_block);
 

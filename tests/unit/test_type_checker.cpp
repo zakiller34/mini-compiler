@@ -3,10 +3,17 @@
 #include <memory>
 
 #include "ast.h"
+#include "type.h"
 #include "type_checker.h"
 
-/// Helper: type-check a single expression.
-static Type check(std::unique_ptr<Expr> body) {
+/// Helper: type-check a single expression, return TypeKind.
+static TypeKind check(std::unique_ptr<Expr> body) {
+  Program prog(std::move(body));
+  return type_check(prog)->kind;
+}
+
+/// Helper: type-check and return full TypePtr.
+static TypePtr check_full(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   return type_check(prog);
 }
@@ -14,12 +21,11 @@ static Type check(std::unique_ptr<Expr> body) {
 // ---- Well-typed accepts ----
 
 TEST(TypeChecker, IntArith) {
-  // 10 + 32
   auto e = std::make_unique<BinaryExpr>(
       BinaryOp::Add,
       std::make_unique<IntExpr>(10),
       std::make_unique<IntExpr>(32));
-  EXPECT_EQ(check(std::move(e)), Type::Int);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Int);
 }
 
 TEST(TypeChecker, IntSub) {
@@ -27,17 +33,17 @@ TEST(TypeChecker, IntSub) {
       BinaryOp::Sub,
       std::make_unique<IntExpr>(52),
       std::make_unique<IntExpr>(10));
-  EXPECT_EQ(check(std::move(e)), Type::Int);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Int);
 }
 
 TEST(TypeChecker, BoolLiteral) {
-  EXPECT_EQ(check(std::make_unique<BoolExpr>(true)), Type::Bool);
+  EXPECT_EQ(check(std::make_unique<BoolExpr>(true)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, NotBool) {
   auto e = std::make_unique<UnaryExpr>(
       UnaryOp::Not, std::make_unique<BoolExpr>(true));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, BoolLogicAnd) {
@@ -45,7 +51,7 @@ TEST(TypeChecker, BoolLogicAnd) {
       BinaryOp::And,
       std::make_unique<BoolExpr>(true),
       std::make_unique<BoolExpr>(false));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, BoolLogicOr) {
@@ -53,25 +59,23 @@ TEST(TypeChecker, BoolLogicOr) {
       BinaryOp::Or,
       std::make_unique<BoolExpr>(false),
       std::make_unique<BoolExpr>(true));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, IfExpr) {
-  // if (true) { 42 } else { 0 }
   auto e = std::make_unique<IfExpr>(
       std::make_unique<BoolExpr>(true),
       std::make_unique<IntExpr>(42),
       std::make_unique<IntExpr>(0));
-  EXPECT_EQ(check(std::move(e)), Type::Int);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Int);
 }
 
 TEST(TypeChecker, IfBoolBranches) {
-  // if (true) { false } else { true }
   auto e = std::make_unique<IfExpr>(
       std::make_unique<BoolExpr>(true),
       std::make_unique<BoolExpr>(false),
       std::make_unique<BoolExpr>(true));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, ComparisonLt) {
@@ -79,7 +83,7 @@ TEST(TypeChecker, ComparisonLt) {
       BinaryOp::Lt,
       std::make_unique<IntExpr>(1),
       std::make_unique<IntExpr>(2));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, ComparisonGe) {
@@ -87,7 +91,7 @@ TEST(TypeChecker, ComparisonGe) {
       BinaryOp::Ge,
       std::make_unique<IntExpr>(5),
       std::make_unique<IntExpr>(3));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, EqInt) {
@@ -95,7 +99,7 @@ TEST(TypeChecker, EqInt) {
       BinaryOp::Eq,
       std::make_unique<IntExpr>(1),
       std::make_unique<IntExpr>(1));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, EqBool) {
@@ -103,11 +107,10 @@ TEST(TypeChecker, EqBool) {
       BinaryOp::Eq,
       std::make_unique<BoolExpr>(true),
       std::make_unique<BoolExpr>(true));
-  EXPECT_EQ(check(std::move(e)), Type::Bool);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, LetWithIf) {
-  // let x = 10; if (x < 20) { x } else { 0 }
   auto e = std::make_unique<LetExpr>(
       "x",
       std::make_unique<IntExpr>(10),
@@ -118,26 +121,24 @@ TEST(TypeChecker, LetWithIf) {
               std::make_unique<IntExpr>(20)),
           std::make_unique<VarExpr>("x"),
           std::make_unique<IntExpr>(0)));
-  EXPECT_EQ(check(std::move(e)), Type::Int);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Int);
 }
 
 TEST(TypeChecker, NegInt) {
   auto e = std::make_unique<UnaryExpr>(
       UnaryOp::Neg, std::make_unique<IntExpr>(10));
-  EXPECT_EQ(check(std::move(e)), Type::Int);
+  EXPECT_EQ(check(std::move(e)), TypeKind::Int);
 }
 
 // ---- Ill-typed rejects ----
 
 TEST(TypeChecker, NotIntThrows) {
-  // not 42
   auto e = std::make_unique<UnaryExpr>(
       UnaryOp::Not, std::make_unique<IntExpr>(42));
   EXPECT_THROW(check(std::move(e)), TypeError);
 }
 
 TEST(TypeChecker, AddBoolThrows) {
-  // 1 + true
   auto e = std::make_unique<BinaryExpr>(
       BinaryOp::Add,
       std::make_unique<IntExpr>(1),
@@ -146,7 +147,6 @@ TEST(TypeChecker, AddBoolThrows) {
 }
 
 TEST(TypeChecker, IfCondNotBoolThrows) {
-  // if (42) { 1 } else { 0 }
   auto e = std::make_unique<IfExpr>(
       std::make_unique<IntExpr>(42),
       std::make_unique<IntExpr>(1),
@@ -155,7 +155,6 @@ TEST(TypeChecker, IfCondNotBoolThrows) {
 }
 
 TEST(TypeChecker, IfBranchMismatchThrows) {
-  // if (true) { 42 } else { false }
   auto e = std::make_unique<IfExpr>(
       std::make_unique<BoolExpr>(true),
       std::make_unique<IntExpr>(42),
@@ -164,7 +163,6 @@ TEST(TypeChecker, IfBranchMismatchThrows) {
 }
 
 TEST(TypeChecker, CmpBoolThrows) {
-  // 1 < true
   auto e = std::make_unique<BinaryExpr>(
       BinaryOp::Lt,
       std::make_unique<IntExpr>(1),
@@ -173,7 +171,6 @@ TEST(TypeChecker, CmpBoolThrows) {
 }
 
 TEST(TypeChecker, AddBoolsThrows) {
-  // true + false
   auto e = std::make_unique<BinaryExpr>(
       BinaryOp::Add,
       std::make_unique<BoolExpr>(true),
@@ -182,7 +179,6 @@ TEST(TypeChecker, AddBoolsThrows) {
 }
 
 TEST(TypeChecker, NegBoolThrows) {
-  // -(true)
   auto e = std::make_unique<UnaryExpr>(
       UnaryOp::Neg, std::make_unique<BoolExpr>(true));
   EXPECT_THROW(check(std::move(e)), TypeError);
@@ -191,15 +187,13 @@ TEST(TypeChecker, NegBoolThrows) {
 // ---- Phase 4: while, set!, begin, void ----
 
 TEST(TypeChecker, WhileIsVoid) {
-    // while (true) { 42 } => Void
     auto e = std::make_unique<WhileExpr>(
         std::make_unique<BoolExpr>(true),
         std::make_unique<IntExpr>(42));
-    EXPECT_EQ(check(std::move(e)), Type::Void);
+    EXPECT_EQ(check(std::move(e)), TypeKind::Void);
 }
 
 TEST(TypeChecker, WhileCondMustBeBool) {
-    // while (42) { 1 } => TypeError
     auto e = std::make_unique<WhileExpr>(
         std::make_unique<IntExpr>(42),
         std::make_unique<IntExpr>(1));
@@ -207,23 +201,20 @@ TEST(TypeChecker, WhileCondMustBeBool) {
 }
 
 TEST(TypeChecker, SetBangIsVoid) {
-    // let x = 10; set! x 42 => Void
     auto e = std::make_unique<LetExpr>(
         "x", std::make_unique<IntExpr>(10),
         std::make_unique<SetBangExpr>(
             "x", std::make_unique<IntExpr>(42)));
-    EXPECT_EQ(check(std::move(e)), Type::Void);
+    EXPECT_EQ(check(std::move(e)), TypeKind::Void);
 }
 
 TEST(TypeChecker, SetBangUnboundThrows) {
-    // set! x 42 => TypeError (x not in scope)
     auto e = std::make_unique<SetBangExpr>(
         "x", std::make_unique<IntExpr>(42));
     EXPECT_THROW(check(std::move(e)), TypeError);
 }
 
 TEST(TypeChecker, SetBangTypeMismatchThrows) {
-    // let x = 10; set! x true => TypeError
     auto e = std::make_unique<LetExpr>(
         "x", std::make_unique<IntExpr>(10),
         std::make_unique<SetBangExpr>(
@@ -232,14 +223,97 @@ TEST(TypeChecker, SetBangTypeMismatchThrows) {
 }
 
 TEST(TypeChecker, BeginTypeIsLast) {
-    // begin { 1; true } => Bool
     std::vector<std::unique_ptr<Expr>> bexprs;
     bexprs.push_back(std::make_unique<IntExpr>(1));
     bexprs.push_back(std::make_unique<BoolExpr>(true));
     auto e = std::make_unique<BeginExpr>(std::move(bexprs));
-    EXPECT_EQ(check(std::move(e)), Type::Bool);
+    EXPECT_EQ(check(std::move(e)), TypeKind::Bool);
 }
 
 TEST(TypeChecker, VoidIsVoid) {
-    EXPECT_EQ(check(std::make_unique<VoidExpr>()), Type::Void);
+    EXPECT_EQ(check(std::make_unique<VoidExpr>()), TypeKind::Void);
+}
+
+// ---- Phase 5: vector types ----
+
+TEST(TypeChecker, VectorWellTyped) {
+    // vector(1, 2)
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    elems.push_back(std::make_unique<IntExpr>(2));
+    auto t = check_full(std::make_unique<VectorExpr>(std::move(elems)));
+    EXPECT_EQ(t->kind, TypeKind::Vector);
+    EXPECT_EQ(t->elem_types.size(), 2u);
+    EXPECT_EQ(*t->elem_types[0], *int_type());
+    EXPECT_EQ(*t->elem_types[1], *int_type());
+}
+
+TEST(TypeChecker, VectorRefType) {
+    // let v = vector(1, true); v[0] => Int
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    elems.push_back(std::make_unique<BoolExpr>(true));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorRefExpr>(
+            std::make_unique<VarExpr>("v"), 0));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Int);
+}
+
+TEST(TypeChecker, VectorSetIsVoid) {
+    // let v = vector(1); v[0] = 2 => Void
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorSetExpr>(
+            std::make_unique<VarExpr>("v"), 0,
+            std::make_unique<IntExpr>(2)));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Void);
+}
+
+TEST(TypeChecker, VectorLengthIsInt) {
+    // let v = vector(1, 2); length(v) => Int
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    elems.push_back(std::make_unique<IntExpr>(2));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorLengthExpr>(
+            std::make_unique<VarExpr>("v")));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Int);
+}
+
+TEST(TypeChecker, VectorRefOOBThrows) {
+    // let v = vector(1); v[1] => TypeError
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorRefExpr>(
+            std::make_unique<VarExpr>("v"), 1));
+    EXPECT_THROW(check(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, VectorSetTypeMismatchThrows) {
+    // let v = vector(1); v[0] = true => TypeError
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorSetExpr>(
+            std::make_unique<VarExpr>("v"), 0,
+            std::make_unique<BoolExpr>(true)));
+    EXPECT_THROW(check(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, NestedVector) {
+    // vector(vector(1))
+    std::vector<std::unique_ptr<Expr>> inner;
+    inner.push_back(std::make_unique<IntExpr>(1));
+    std::vector<std::unique_ptr<Expr>> outer;
+    outer.push_back(std::make_unique<VectorExpr>(std::move(inner)));
+    auto t = check_full(std::make_unique<VectorExpr>(std::move(outer)));
+    EXPECT_EQ(t->kind, TypeKind::Vector);
+    EXPECT_EQ(t->elem_types[0]->kind, TypeKind::Vector);
 }

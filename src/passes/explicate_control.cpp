@@ -82,6 +82,31 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
         return cir::CCmpExpr{cop, make_atom(bine->lhs.get()),
                               make_atom(bine->rhs.get())};
     }
+    case NodeKind::VectorRef: {
+        auto *vr = static_cast<const VectorRefExpr *>(e);
+        return cir::CVectorRefExpr{make_atom(vr->vec.get()), vr->index};
+    }
+    case NodeKind::VectorSet: {
+        auto *vs = static_cast<const VectorSetExpr *>(e);
+        return cir::CVectorSetExpr{make_atom(vs->vec.get()), vs->index,
+                                    make_atom(vs->val.get())};
+    }
+    case NodeKind::VectorLength: {
+        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        return cir::CVectorLengthExpr{make_atom(vl->vec.get())};
+    }
+    case NodeKind::Allocate: {
+        auto *ae = static_cast<const AllocateExpr *>(e);
+        return cir::CAllocateExpr{ae->len, ae->type};
+    }
+    case NodeKind::Collect: {
+        auto *ce = static_cast<const CollectExpr *>(e);
+        return cir::CCollectExpr{ce->bytes};
+    }
+    case NodeKind::GlobalValue: {
+        auto *gv = static_cast<const GlobalValueExpr *>(e);
+        return cir::CGlobalValueExpr{gv->name};
+    }
     default:
         return cir::AtomExpr{cir::IntAtom{0}};
     }
@@ -131,6 +156,7 @@ bool is_complex_init(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::If: case NodeKind::While:
     case NodeKind::Begin: case NodeKind::SetBang:
+    case NodeKind::Collect: case NodeKind::Let:
         return true;
     default:
         return false;
@@ -258,6 +284,7 @@ bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
                       std::map<std::string, cir::BasicBlock> &blocks,
                       int &lc) {
     const Expr *cond = pw.expr;
+    peel_lets(cond, pw.stmts);
     switch (cond->kind()) {
     case NodeKind::Binary: {
         auto *bine = static_cast<const BinaryExpr *>(cond);
@@ -370,6 +397,29 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
         stmts.push_back({aw.var, cir::AtomExpr{cir::IntAtom{0}}});
         blocks[aw.block_label] = {std::move(stmts),
                                    cir::Goto{aw.cont_label}};
+        break;
+    }
+    case NodeKind::Let: {
+        auto *le = static_cast<const LetExpr *>(e);
+        auto stmts_copy = std::move(aw.stmts);
+        // Peel simple lets first
+        const Expr *cur_e = e;
+        peel_lets(cur_e, stmts_copy);
+        if (cur_e->kind() == NodeKind::Let) {
+            auto *inner_le = static_cast<const LetExpr *>(cur_e);
+            std::string cont_l = fresh_label("cont", lc);
+            wl.push_back(AssignWork{cont_l, {}, inner_le->body.get(),
+                                     aw.var, aw.cont_label});
+            wl.push_back(AssignWork{aw.block_label, std::move(stmts_copy),
+                                     inner_le->init.get(), inner_le->var, cont_l});
+        } else if (is_complex_init(cur_e)) {
+            wl.push_back(AssignWork{aw.block_label, std::move(stmts_copy),
+                                     cur_e, aw.var, aw.cont_label});
+        } else {
+            stmts_copy.push_back({aw.var, expr_to_cexpr(cur_e)});
+            blocks[aw.block_label] = {std::move(stmts_copy),
+                                       cir::Goto{aw.cont_label}};
+        }
         break;
     }
     default: {

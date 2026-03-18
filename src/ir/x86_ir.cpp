@@ -51,6 +51,9 @@ std::string dump_arg(const Arg &a) {
     if (const auto *deref = std::get_if<Deref>(&a)) {
         return std::to_string(deref->offset) + "(" + reg_name(deref->reg) + ")";
     }
+    if (const auto *ga = std::get_if<GlobalArg>(&a)) {
+        return ga->name + "(%rip)";
+    }
     return "var:" + std::get<VarArg>(a).name;
 }
 
@@ -81,6 +84,12 @@ std::string dump_instr(const Instr &i) {
         return "    retq";
     if (const auto *j = std::get_if<JmpIf>(&i))
         return "    j" + cc_name(j->cc) + " " + j->label;
+    if (const auto *aq = std::get_if<Andq>(&i))
+        return "    andq " + dump_arg(aq->src) + ", " + dump_arg(aq->dst);
+    if (const auto *sq = std::get_if<Sarq>(&i))
+        return "    sarq " + dump_arg(sq->src) + ", " + dump_arg(sq->dst);
+    if (const auto *lq = std::get_if<Leaq>(&i))
+        return "    leaq " + dump_arg(lq->src) + ", " + dump_arg(lq->dst);
     return "    jmp " + std::get<Jmp>(i).label;
 }
 

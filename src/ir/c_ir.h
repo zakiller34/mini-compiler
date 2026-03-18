@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../type.h"
+
 #include <cstdint>
 #include <map>
 #include <string>
@@ -28,9 +30,18 @@ struct CUnaryExpr { CUnaryOp op; Atom operand; };
 struct CBinaryExpr { CBinaryOp op; Atom lhs; Atom rhs; };
 struct CCmpExpr { CCmpOp op; Atom lhs; Atom rhs; };
 struct CNotExpr { Atom operand; };
+struct CAllocateExpr { int64_t len; TypePtr type; };
+struct CVectorRefExpr { Atom vec; int64_t index; };
+struct CVectorSetExpr { Atom vec; int64_t index; Atom val; };
+struct CVectorLengthExpr { Atom vec; };
+struct CGlobalValueExpr { std::string name; };
+struct CCollectExpr { int64_t bytes; };
 
 using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr,
-                           CCmpExpr, CNotExpr>;
+                           CCmpExpr, CNotExpr,
+                           CAllocateExpr, CVectorRefExpr, CVectorSetExpr,
+                           CVectorLengthExpr, CGlobalValueExpr,
+                           CCollectExpr>;
 
 // -- Statements --
 
@@ -61,6 +72,7 @@ struct BasicBlock {
 
 struct CProgram {
   std::map<std::string, BasicBlock> blocks;
+  std::map<std::string, TypePtr> var_types;
   std::string dump() const;
 };
 

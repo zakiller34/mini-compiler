@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../type.h"
+
 #include <cstdint>
 #include <map>
 #include <set>
@@ -20,8 +22,9 @@ struct Imm { int64_t value; };
 struct RegArg { Reg reg; };
 struct Deref { Reg reg; int64_t offset; };
 struct VarArg { std::string name; };
+struct GlobalArg { std::string name; };
 
-using Arg = std::variant<Imm, RegArg, Deref, VarArg>;
+using Arg = std::variant<Imm, RegArg, Deref, VarArg, GlobalArg>;
 
 // -- Instructions --
 
@@ -39,16 +42,22 @@ struct Callq { std::string label; int64_t arity; };
 struct Retq {};
 struct Jmp { std::string label; };
 struct JmpIf { CC cc; std::string label; };
+struct Andq { Arg src; Arg dst; };
+struct Sarq { Arg src; Arg dst; };
+struct Leaq { Arg src; Arg dst; };
 
 using Instr = std::variant<Addq, Subq, Movq, Negq, Xorq, Cmpq, SetCC,
-                           Movzbq, Pushq, Popq, Callq, Retq, Jmp, JmpIf>;
+                           Movzbq, Pushq, Popq, Callq, Retq, Jmp, JmpIf,
+                           Andq, Sarq, Leaq>;
 
 struct Block { std::vector<Instr> instrs; };
 
 struct X86Program {
   std::map<std::string, Block> blocks;
   int64_t stack_space = 0;
+  int64_t root_stack_space = 0;
   std::set<Reg> used_callee_saved;
+  std::map<std::string, TypePtr> var_types;
   std::string dump() const;
 };
 

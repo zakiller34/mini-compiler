@@ -6,6 +6,7 @@
 #include "passes/assign_homes.h"
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
+#include "passes/expose_allocation.h"
 #include "passes/patch_instructions.h"
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
@@ -50,7 +51,8 @@ int compile(const std::string &src_file, const std::string &out_file) {
     auto p0 = shrink(*prog);
     auto p1 = uniquify(*p0);
     auto p1b = uncover_get(*p1);
-    auto p2 = remove_complex_operands(*p1b);
+    auto p1c = expose_allocation(*p1b);
+    auto p2 = remove_complex_operands(*p1c);
     auto c_prog = explicate_control(*p2);
     auto x1 = select_instructions(c_prog);
     auto x2 = assign_homes(x1);
@@ -87,6 +89,8 @@ int run_interpret(const std::string &src_file,
             std::cout << *i << "\n";
         } else if (auto *b = std::get_if<bool>(&result)) {
             std::cout << (*b ? "true" : "false") << "\n";
+        } else if (std::holds_alternative<Tuple>(result)) {
+            std::cout << "(vector ...)" << "\n";
         } else {
             std::cout << "(void)" << "\n";
         }

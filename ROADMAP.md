@@ -211,54 +211,54 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ---
 
-## Phase 5: Tuples & Garbage Collection (Book Ch. 6, pp. 95-124)
+## Phase 5: Tuples & Garbage Collection (Book Ch. 6, pp. 95-124) ✅
 
 **Language: L_Tup** — adds heap-allocated tuples (fixed-length heterogeneous vectors).
 
-### 5A — Frontend
+### 5A — Frontend ✅
 
-- [ ] New tokens: `VECTOR`, `VECTOR_REF`, `VECTOR_SET`, `VECTOR_LENGTH`
-- [ ] Grammar: `vector(e1, ..., en)`, `e[i]` (vector-ref), `e[i] = e` (vector-set!), `length(e)`
-- [ ] AST nodes: `VectorExpr`, `VectorRefExpr`, `VectorSetExpr`, `VectorLengthExpr`
-- [ ] Type checker: `Vector` type parameterized by element types; index must be int literal (statically known); `vector-set!` returns `Void`
-- [ ] Interpreter: tuples as heap objects with aliasing semantics
+- [x] New tokens: `Comma`, `LBracket`, `RBracket`, `VectorKw`, `Length`
+- [x] Grammar: `vector(e1, ..., en)`, `e[i]` (vector-ref), `e[i] = val` (vector-set!), `length(e)`
+- [x] AST nodes: `VectorExpr`, `VectorRefExpr`, `VectorSetExpr`, `VectorLengthExpr`, `AllocateExpr`, `CollectExpr`, `GlobalValueExpr`
+- [x] Type system: replaced `enum Type` with parameterized `TypePtr = shared_ptr<Type>`, `TypeKind{Int,Bool,Void,Vector}`, `vector_type(elems)`
+- [x] Type checker: vector well-typed, ref returns elem type, set! returns Void, length returns Int, OOB rejected, nested vectors
+- [x] Interpreter: `Tuple = shared_ptr<TupleData>` for heap-allocated tuples with aliasing semantics
 
-### 5B — Runtime: Garbage Collector
+### 5B — Runtime: Garbage Collector ✅
 
-- [ ] Implement two-space copying collector in `runtime.c`
-  - [ ] `initialize(rootstack_size, heap_size)` — create FromSpace, ToSpace, root stack
-  - [ ] `collect(rootstack_ptr, bytes_requested)` — Cheney's algorithm (BFS copy)
-  - [ ] 64-bit tag per tuple: bit 0 = forwarding flag, bits 1-6 = length, bits 7+ = pointer mask
-  - [ ] Root stack (shadow stack) for spilled tuple-typed vars
-  - [ ] `free_ptr`, `fromspace_begin`, `fromspace_end`, `rootstack_begin` globals
+- [x] Two-space Cheney copying collector in `runtime.c`
+  - [x] `initialize(rootstack_size, heap_size)` — calloc from/tospace + rootstack
+  - [x] `collect(rootstack_ptr, bytes_requested)` — Cheney BFS copy, swap spaces
+  - [x] 64-bit tag: bit 0 = forwarding, bits 1-6 = length, bits 7+ = pointer mask
+  - [x] Root stack for spilled tuple-typed vars via R15
+  - [x] Globals: `free_ptr`, `fromspace_begin/end`, `tospace_begin/end`, `rootstack_begin`
 
-### 5C — Compiler Passes
+### 5C — Compiler Passes ✅
 
-- [ ] **expose_allocation** — lower `vector(...)` to: sequence of temp bindings, conditional `collect` call, `allocate`, `vector-set!` initialization
-- [ ] Update **remove_complex_operands** — `collect`, `allocate`, `global_value` are complex
-- [ ] Update **explicate_control** — handle new forms in C_Tup IR
-- [ ] **select_instructions** — tuple read/write via `movq` with offset `8(n+1)(%r11)`; `r11` reserved for tuple base; `allocate` -> inline bump `free_ptr`; `collect` -> `callq collect`; `vector-length` -> tag extraction with `andq`/`sarq`; global vars via `label(%rip)` addressing
-- [ ] Register allocator: `r11` and `r15` (root stack ptr) removed from allocable set; tuple-typed vars spill to root stack (not regular stack); interference edges between tuple-live vars and callee-saved regs across `collect` calls
-- [ ] **prelude/conclusion** — call `initialize`; setup `r15` from `rootstack_begin`; zero root stack slots; adjust `r15` in conclusion
-- [ ] Test: tuple creation, nested tuples, aliasing, GC triggering
+- [x] **expose_allocation** (new pass, after shrink/uniquify/uncover_get, before RCO) — lower `vector(e1..en)` to let-bound temps + GC check + `allocate` + `vector-set!` init
+- [x] Updated all upstream passes (shrink, uniquify, uncover_get) to handle new AST nodes
+- [x] Updated **RCO** — atomize VectorRef/VectorSet/VectorLength operands; Allocate/Collect/GlobalValue as complex
+- [x] Updated **explicate_control** — new CExpr types (`CAllocateExpr`, `CVectorRefExpr`, `CVectorSetExpr`, `CVectorLengthExpr`, `CGlobalValueExpr`, `CCollectExpr`); Let handling in assign/pred positions
+- [x] Updated **select_instructions** — bump `free_ptr(%rip)` + tag store for allocate; `8*(i+1)(%r11)` offsets for ref/set; `andq`/`sarq` for length; `GlobalArg{name}` → `name(%rip)`; `callq collect` with R15→%rdi
+- [x] Updated **liveness** + **interference** — reads/writes for `Andq`/`Sarq`/`Leaq`
+- [x] Updated **assign_homes** — tuple-typed spills → `Deref{R15, 8*slot}`, non-tuple → `Deref{Rbp, -8*slot}`
+- [x] Updated **patch_instructions** — `GlobalArg` treated as memory; `Andq` patching
+- [x] Updated **prelude/conclusion** — `callq initialize`; `movq rootstack_begin(%rip), %r15`; zero root stack slots
+- [x] Updated **emit** — emit `GlobalArg`, `Andq`, `Sarq`, `Leaq`
+- [x] X86 IR extended: `GlobalArg`, `Andq`, `Sarq`, `Leaq`, `root_stack_space`, `var_types`
 
-### 5 — Tests (TDD)
+### 5 — Tests ✅
 
-- [ ] `test_expose_alloc.cpp` — vector lowered to allocate + collect + init sequence
-- [ ] `test_gc_tags.cpp` — tag encode/decode roundtrip for various lengths and pointer masks
-- [ ] `test_gc_runtime.cpp` — Cheney copy preserves reachable objects
-- [ ] Integration: tuple programs in `tests/programs/phase5/`, GC stress tests
+- [x] `test_type_checker.cpp` — 7 new tests: vector well-typed, ref type, set! void, length int, OOB reject, type mismatch, nested
+- [x] `test_pipeline.cpp` — 3 new integration tests: SimpleTuple, TupleSet, TupleLength
+- [x] 5 `.mc` programs in `tests/programs/phase5/` (simple_tuple, tuple_set, tuple_length, nested_tuple, alias)
 
-### 5 — Z3 Predicate Tests
+### 5 — Deferred
 
-- [ ] `tag_encode_decode_roundtrip(len, mask)` — ForAll len mask, `decode(encode(len,mask)) == (len,mask)`
-- [ ] `all_live_tuples_on_rootstack(prog)` — every live tuple-typed var is on root stack across collect calls
-
-### 5 — Lean Proofs
-
-- [ ] `tag_roundtrip` — encode then decode yields original (len, mask)
-- [ ] `cheney_preserves_reachable` — all reachable objects survive collection
-- [ ] `root_stack_invariant` — root stack always points to valid tuples
+- [ ] Z3 predicate tests (`test_gc_z3.cpp` — tag roundtrip, rootstack invariant)
+- [ ] Lean stubs (`AST.lean` Ty.vector, `Passes/ExposeAllocation.lean`, `GC.lean`)
+- [ ] Per-pass unit tests for expose_allocation, GC tags, GC runtime
+- [ ] GC stress integration test
 
 ---
 

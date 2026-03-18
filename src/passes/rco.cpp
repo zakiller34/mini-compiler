@@ -23,12 +23,18 @@ struct WhileBuildCond { const Expr *body; Need need; };
 struct WhileBuildBody { Need need; };
 struct SetBangBuild { std::string var; Need need; };
 struct BeginBuild { std::vector<const Expr *> remaining; size_t total; Need need; };
+struct VectorRefBuild { int64_t index; Need need; };
+struct VectorSetVecBuild { int64_t index; const Expr *val; Need need; };
+struct VectorSetValBuild { int64_t index; Need need; };
+struct VectorLengthBuild { Need need; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
                            LetBuildInit, LetBuildBody,
                            WhileBuildCond, WhileBuildBody,
-                           SetBangBuild, BeginBuild>;
+                           SetBangBuild, BeginBuild,
+                           VectorRefBuild, VectorSetVecBuild,
+                           VectorSetValBuild, VectorLengthBuild>;
 
 using Binding = std::pair<std::string, std::unique_ptr<Expr>>;
 
@@ -150,6 +156,49 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         results.push_back({std::make_unique<GetExpr>(
             static_cast<const GetExpr *>(e)->name), {}});
         break;
+    case NodeKind::Allocate: {
+        auto *ae = static_cast<const AllocateExpr *>(e);
+        Result res = {std::make_unique<AllocateExpr>(ae->len, ae->type), {}};
+        atomize(res, ef.need, tmp_counter);
+        results.push_back(std::move(res));
+        break;
+    }
+    case NodeKind::Collect: {
+        auto *ce = static_cast<const CollectExpr *>(e);
+        Result res = {std::make_unique<CollectExpr>(ce->bytes), {}};
+        atomize(res, ef.need, tmp_counter);
+        results.push_back(std::move(res));
+        break;
+    }
+    case NodeKind::GlobalValue: {
+        auto *gv = static_cast<const GlobalValueExpr *>(e);
+        Result res = {std::make_unique<GlobalValueExpr>(gv->name), {}};
+        atomize(res, ef.need, tmp_counter);
+        results.push_back(std::move(res));
+        break;
+    }
+    case NodeKind::VectorRef: {
+        auto *vr = static_cast<const VectorRefExpr *>(e);
+        stack.push_back(VectorRefBuild{vr->index, ef.need});
+        stack.push_back(EvalFrame{vr->vec.get(), Need::Atom});
+        break;
+    }
+    case NodeKind::VectorSet: {
+        auto *vs = static_cast<const VectorSetExpr *>(e);
+        stack.push_back(VectorSetVecBuild{vs->index, vs->val.get(), ef.need});
+        stack.push_back(EvalFrame{vs->vec.get(), Need::Atom});
+        break;
+    }
+    case NodeKind::VectorLength: {
+        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        stack.push_back(VectorLengthBuild{ef.need});
+        stack.push_back(EvalFrame{vl->vec.get(), Need::Atom});
+        break;
+    }
+    case NodeKind::Vector:
+        // Should not appear after expose_allocation
+        results.push_back({std::make_unique<VoidExpr>(), {}});
+        break;
     }
 }
 
@@ -228,6 +277,34 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         Result res;
         res.expr = std::make_unique<SetBangExpr>(sb->var, std::move(expr_w));
         atomize(res, sb->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *vr = std::get_if<VectorRefBuild>(&frame)) {
+        auto vec = std::move(results.back()); results.pop_back();
+        Result res;
+        res.bindings = std::move(vec.bindings);
+        res.expr = std::make_unique<VectorRefExpr>(
+            std::move(vec.expr), vr->index);
+        atomize(res, vr->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *vsv = std::get_if<VectorSetVecBuild>(&frame)) {
+        stack.push_back(VectorSetValBuild{vsv->index, vsv->need});
+        stack.push_back(EvalFrame{vsv->val, Need::Atom});
+    } else if (auto *vs = std::get_if<VectorSetValBuild>(&frame)) {
+        auto val = std::move(results.back()); results.pop_back();
+        auto vec = std::move(results.back()); results.pop_back();
+        Result res;
+        res.bindings = std::move(vec.bindings);
+        for (auto &b : val.bindings) res.bindings.push_back(std::move(b));
+        res.expr = std::make_unique<VectorSetExpr>(
+            std::move(vec.expr), vs->index, std::move(val.expr));
+        atomize(res, vs->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *vl = std::get_if<VectorLengthBuild>(&frame)) {
+        auto vec = std::move(results.back()); results.pop_back();
+        Result res;
+        res.bindings = std::move(vec.bindings);
+        res.expr = std::make_unique<VectorLengthExpr>(std::move(vec.expr));
+        atomize(res, vl->need, tmp_counter);
         results.push_back(std::move(res));
     } else if (auto *bb = std::get_if<BeginBuild>(&frame)) {
         if (bb->remaining.empty()) {

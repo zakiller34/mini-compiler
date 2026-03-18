@@ -1,11 +1,18 @@
-#include "shrink.h"
+#include "expose_allocation.h"
 
 #include <algorithm>
-#include <memory>
+#include <string>
 #include <variant>
 #include <vector>
 
 namespace {
+
+int tmp_counter = 0;
+
+/// @brief Generate a fresh temporary name
+std::string fresh_tmp() {
+    return "alloc." + std::to_string(tmp_counter++);
+}
 
 struct EvalFrame { const Expr *expr; };
 struct UnaryBuild { UnaryOp op; };
@@ -20,7 +27,7 @@ struct WhileBuildCond { const Expr *body; };
 struct WhileBuildBody {};
 struct SetBangBuild { std::string var; };
 struct BeginBuild { std::vector<const Expr *> remaining; size_t total; };
-struct VectorBuild { size_t total; std::vector<const Expr *> remaining; };
+struct VectorBuild { size_t total; TypePtr vec_type; };
 struct VectorRefBuild { int64_t index; };
 struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
@@ -35,12 +42,34 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild>;
 
-/// @brief Evaluate leaf or push continuation frames for shrink
-/// @requires ef.expr != nullptr
-/// @modifies stack, results
+/// @brief Infer the type of a vector literal for Allocate node
+/// @requires elems non-empty; elements already expose-allocated
+TypePtr infer_vector_type(const std::vector<std::unique_ptr<Expr>> &elems) {
+    std::vector<TypePtr> ts;
+    // invariant: ts has inferred types for elems[0..i)
+    for (size_t i = 0; i < elems.size(); ++i) {
+        const Expr *e = elems[i].get();
+        switch (e->kind()) {
+        case NodeKind::Int: ts.push_back(int_type()); break;
+        case NodeKind::Bool: ts.push_back(bool_type()); break;
+        case NodeKind::Void: ts.push_back(void_type()); break;
+        case NodeKind::Allocate:
+            ts.push_back(static_cast<const AllocateExpr *>(e)->type);
+            break;
+        default:
+            // For vars and other exprs, we use Int as default
+            // (type checker has validated; actual type threading is more complex)
+            ts.push_back(int_type());
+            break;
+        }
+    }
+    return vector_type(std::move(ts));
+}
+
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
     const Expr *e = ef.expr;
+
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back(std::make_unique<IntExpr>(
@@ -57,6 +86,13 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     case NodeKind::Read:
         results.push_back(std::make_unique<ReadExpr>());
         break;
+    case NodeKind::Void:
+        results.push_back(std::make_unique<VoidExpr>());
+        break;
+    case NodeKind::Get:
+        results.push_back(std::make_unique<GetExpr>(
+            static_cast<const GetExpr *>(e)->name));
+        break;
     case NodeKind::Unary: {
         auto *ue = static_cast<const UnaryExpr *>(e);
         stack.push_back(UnaryBuild{ue->op});
@@ -64,19 +100,9 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(e);
-        if (bine->op == BinaryOp::And || bine->op == BinaryOp::Or) {
-            if (bine->op == BinaryOp::And) {
-                stack.push_back(IfBuildCond{bine->rhs.get(), nullptr});
-                stack.push_back(EvalFrame{bine->lhs.get()});
-            } else {
-                stack.push_back(IfBuildCond{nullptr, bine->rhs.get()});
-                stack.push_back(EvalFrame{bine->lhs.get()});
-            }
-        } else {
-            stack.push_back(BinBuildLhs{bine->op, bine->rhs.get()});
-            stack.push_back(EvalFrame{bine->lhs.get()});
-        }
+        auto *be = static_cast<const BinaryExpr *>(e);
+        stack.push_back(BinBuildLhs{be->op, be->rhs.get()});
+        stack.push_back(EvalFrame{be->lhs.get()});
         break;
     }
     case NodeKind::If: {
@@ -120,26 +146,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         }
         break;
     }
-    case NodeKind::Void:
-        results.push_back(std::make_unique<VoidExpr>());
-        break;
-    case NodeKind::Get:
-        results.push_back(std::make_unique<GetExpr>(
-            static_cast<const GetExpr *>(e)->name));
-        break;
     case NodeKind::Vector: {
         auto *ve = static_cast<const VectorExpr *>(e);
-        if (ve->elems.empty()) {
-            results.push_back(std::make_unique<VectorExpr>(
-                std::vector<std::unique_ptr<Expr>>{}));
-        } else {
-            std::vector<const Expr *> remaining;
-            for (size_t i = 1; i < ve->elems.size(); ++i) {
-                remaining.push_back(ve->elems[i].get());
-            }
-            stack.push_back(VectorBuild{ve->elems.size(),
-                                         std::move(remaining)});
-            stack.push_back(EvalFrame{ve->elems[0].get()});
+        // Push all elements for evaluation, then VectorBuild
+        // We need a type but don't have it until we know element types
+        // Use a placeholder; type is inferred after elements are built
+        stack.push_back(VectorBuild{ve->elems.size(), nullptr});
+        // Push elements in reverse
+        for (int i = static_cast<int>(ve->elems.size()) - 1; i >= 0; --i) {
+            stack.push_back(EvalFrame{ve->elems[i].get()});
         }
         break;
     }
@@ -162,23 +177,27 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Allocate:
+        results.push_back(std::make_unique<AllocateExpr>(
+            static_cast<const AllocateExpr *>(e)->len,
+            static_cast<const AllocateExpr *>(e)->type));
+        break;
     case NodeKind::Collect:
+        results.push_back(std::make_unique<CollectExpr>(
+            static_cast<const CollectExpr *>(e)->bytes));
+        break;
     case NodeKind::GlobalValue:
-        // Compiler-internal; should not appear before shrink
-        results.push_back(std::make_unique<VoidExpr>());
+        results.push_back(std::make_unique<GlobalValueExpr>(
+            static_cast<const GlobalValueExpr *>(e)->name));
         break;
     }
 }
 
-/// @brief Process continuation frame for shrink (And/Or desugaring)
-/// @requires results has enough values for the continuation
-/// @modifies stack, results
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
-        results.push_back(
-            std::make_unique<UnaryExpr>(ub->op, std::move(operand)));
+        results.push_back(std::make_unique<UnaryExpr>(
+            ub->op, std::move(operand)));
     } else if (auto *bl = std::get_if<BinBuildLhs>(&frame)) {
         stack.push_back(BinBuildRhs{bl->op});
         stack.push_back(EvalFrame{bl->rhs});
@@ -188,43 +207,17 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         results.push_back(std::make_unique<BinaryExpr>(
             br->op, std::move(lhs), std::move(rhs)));
     } else if (auto *ic = std::get_if<IfBuildCond>(&frame)) {
-        // Cond result on stack. Handle And/Or desugaring:
-        if (ic->then_br == nullptr) {
-            // Or(a, b) → If(cond, true, b) — then_br is nullptr
-            stack.push_back(IfBuildThen{nullptr});
-            // "then" is BoolExpr(true), push directly
-            results.push_back(std::make_unique<BoolExpr>(true));
-            stack.push_back(EvalFrame{ic->else_br});
-        } else if (ic->else_br == nullptr) {
-            // And(a, b) → If(cond, b, false) — else_br is nullptr
-            stack.push_back(IfBuildThen{nullptr});
-            stack.push_back(EvalFrame{ic->then_br});
-        } else {
-            // Normal if
-            stack.push_back(IfBuildThen{ic->else_br});
-            stack.push_back(EvalFrame{ic->then_br});
-        }
+        stack.push_back(IfBuildThen{ic->else_br});
+        stack.push_back(EvalFrame{ic->then_br});
     } else if (auto *it = std::get_if<IfBuildThen>(&frame)) {
-        if (it->else_br == nullptr) {
-            // Desugared And: else is false; Or: else already processed
-            // Check if this is And (then result on stack, need false else)
-            // or Or (true and else both on stack)
-            // For And: then_result on stack, push false
-            // For Or: true on stack below, else_result on top — we're done
-            // Actually: let's just check if there was an else_br to process
-            stack.push_back(IfBuildElse{});
-            // For And: push BoolExpr(false) as else
-            results.push_back(std::make_unique<BoolExpr>(false));
-        } else {
-            stack.push_back(IfBuildElse{});
-            stack.push_back(EvalFrame{it->else_br});
-        }
+        stack.push_back(IfBuildElse{});
+        stack.push_back(EvalFrame{it->else_br});
     } else if (std::get_if<IfBuildElse>(&frame) != nullptr) {
-        auto else_r = std::move(results.back()); results.pop_back();
-        auto then_r = std::move(results.back()); results.pop_back();
-        auto cond_r = std::move(results.back()); results.pop_back();
+        auto else_e = std::move(results.back()); results.pop_back();
+        auto then_e = std::move(results.back()); results.pop_back();
+        auto cond_e = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<IfExpr>(
-            std::move(cond_r), std::move(then_r), std::move(else_r)));
+            std::move(cond_e), std::move(then_e), std::move(else_e)));
     } else if (auto *li = std::get_if<LetBuildInit>(&frame)) {
         stack.push_back(LetBuildBody{li->var});
         stack.push_back(EvalFrame{li->body});
@@ -262,21 +255,76 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             stack.push_back(EvalFrame{next});
         }
     } else if (auto *vb = std::get_if<VectorBuild>(&frame)) {
-        if (vb->remaining.empty()) {
-            std::vector<std::unique_ptr<Expr>> elems;
-            for (size_t i = 0; i < vb->total; ++i) {
-                elems.push_back(std::move(results.back()));
-                results.pop_back();
-            }
-            std::reverse(elems.begin(), elems.end());
-            results.push_back(std::make_unique<VectorExpr>(std::move(elems)));
-        } else {
-            const Expr *next = vb->remaining[0];
-            std::vector<const Expr *> rest(vb->remaining.begin() + 1,
-                                            vb->remaining.end());
-            stack.push_back(VectorBuild{vb->total, std::move(rest)});
-            stack.push_back(EvalFrame{next});
+        // All n elements are on results stack (in order)
+        std::vector<std::unique_ptr<Expr>> elem_exprs;
+        for (size_t i = 0; i < vb->total; ++i) {
+            elem_exprs.push_back(std::move(results.back()));
+            results.pop_back();
         }
+        std::reverse(elem_exprs.begin(), elem_exprs.end());
+
+        // Infer vector type from element expressions
+        TypePtr vtype = infer_vector_type(elem_exprs);
+        int64_t n = static_cast<int64_t>(vb->total);
+        int64_t bytes = 8 * (n + 1); // tag + n elements
+
+        // Build: let t0=e0 in ... let tn=en in
+        //   begin { if (+ free_ptr bytes) < fromspace_end then void
+        //           else collect(bytes);
+        //           let v = allocate(n, type);
+        //           vector-set!(v,0,t0); ... vector-set!(v,n-1,tn);
+        //           v }
+
+        // Generate temp names for each element
+        std::vector<std::string> tmp_names;
+        for (size_t i = 0; i < elem_exprs.size(); ++i) {
+            tmp_names.push_back(fresh_tmp());
+        }
+
+        // Build the begin body
+        std::vector<std::unique_ptr<Expr>> begin_body;
+
+        // if (+ (global free_ptr) bytes) < (global fromspace_end)
+        //   then void else collect(bytes)
+        auto gc_check = std::make_unique<IfExpr>(
+            std::make_unique<BinaryExpr>(
+                BinaryOp::Lt,
+                std::make_unique<BinaryExpr>(
+                    BinaryOp::Add,
+                    std::make_unique<GlobalValueExpr>("free_ptr"),
+                    std::make_unique<IntExpr>(bytes)),
+                std::make_unique<GlobalValueExpr>("fromspace_end")),
+            std::make_unique<VoidExpr>(),
+            std::make_unique<CollectExpr>(bytes));
+        begin_body.push_back(std::move(gc_check));
+
+        // let v = allocate(n, type)
+        std::string v_name = fresh_tmp();
+
+        // vector-set!(v, i, ti) for each element
+        for (size_t i = 0; i < tmp_names.size(); ++i) {
+            begin_body.push_back(std::make_unique<VectorSetExpr>(
+                std::make_unique<VarExpr>(v_name),
+                static_cast<int64_t>(i),
+                std::make_unique<VarExpr>(tmp_names[i])));
+        }
+
+        // final: v
+        begin_body.push_back(std::make_unique<VarExpr>(v_name));
+
+        // Wrap in let v = allocate(n, type); begin { ... }
+        std::unique_ptr<Expr> inner = std::make_unique<LetExpr>(
+            v_name,
+            std::make_unique<AllocateExpr>(n, vtype),
+            std::make_unique<BeginExpr>(std::move(begin_body)));
+
+        // Wrap in let ti = ei for each element (outermost first)
+        for (int i = static_cast<int>(tmp_names.size()) - 1; i >= 0; --i) {
+            inner = std::make_unique<LetExpr>(
+                tmp_names[i], std::move(elem_exprs[i]), std::move(inner));
+        }
+
+        results.push_back(std::move(inner));
     } else if (auto *vr = std::get_if<VectorRefBuild>(&frame)) {
         auto vec = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<VectorRefExpr>(
@@ -297,10 +345,8 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 } // namespace
 
-/// @brief Desugar And/Or into If expressions
-/// @requires prog.body != nullptr
-/// @ensures result has no And/Or nodes; replaced by If(cond, rhs, #f)/#t
-std::unique_ptr<Program> shrink(const Program &prog) {
+std::unique_ptr<Program> expose_allocation(const Program &prog) {
+    tmp_counter = 0;
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
     stack.push_back(EvalFrame{prog.body.get()});

@@ -124,11 +124,36 @@ std::unique_ptr<Expr> Parser::parse_unary() {
                           ? UnaryOp::Neg : UnaryOp::Not);
         advance();
     }
-    auto expr = parse_primary();
+    auto expr = parse_postfix();
     // invariant: expr wrapped with ops[i+1..] applied
     // decreases: i
     for (int i = static_cast<int>(ops.size()) - 1; i >= 0; --i) {
         expr = std::make_unique<UnaryExpr>(ops[i], std::move(expr));
+    }
+    return expr;
+}
+
+/// @brief Parse postfix: primary ('[' INT ']' ('=' expr)? )*
+std::unique_ptr<Expr> Parser::parse_postfix() {
+    auto expr = parse_primary();
+    // invariant: expr accumulates postfix subscript/set ops
+    // decreases: remaining tokens
+    while (cur_.kind == TokenKind::LBracket) {
+        advance();
+        if (cur_.kind != TokenKind::IntLit) {
+            throw ParseError("expected integer index in []");
+        }
+        int64_t idx = cur_.int_val;
+        advance();
+        expect(TokenKind::RBracket, "']'");
+        if (cur_.kind == TokenKind::Equals) {
+            advance();
+            auto val = parse_expr();
+            expr = std::make_unique<VectorSetExpr>(
+                std::move(expr), idx, std::move(val));
+        } else {
+            expr = std::make_unique<VectorRefExpr>(std::move(expr), idx);
+        }
     }
     return expr;
 }
@@ -209,6 +234,27 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         auto expr = parse_expr();
         return std::make_unique<SetBangExpr>(
             std::move(name), std::move(expr));
+    }
+    case TokenKind::VectorKw: {
+        advance();
+        expect(TokenKind::LParen, "'('");
+        std::vector<std::unique_ptr<Expr>> elems;
+        elems.push_back(parse_expr());
+        // invariant: elems has all parsed elements so far
+        // decreases: remaining tokens until ')'
+        while (cur_.kind == TokenKind::Comma) {
+            advance();
+            elems.push_back(parse_expr());
+        }
+        expect(TokenKind::RParen, "')'");
+        return std::make_unique<VectorExpr>(std::move(elems));
+    }
+    case TokenKind::Length: {
+        advance();
+        expect(TokenKind::LParen, "'('");
+        auto vec = parse_expr();
+        expect(TokenKind::RParen, "')'");
+        return std::make_unique<VectorLengthExpr>(std::move(vec));
     }
     case TokenKind::Void: {
         advance();

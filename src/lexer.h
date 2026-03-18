@@ -35,6 +35,11 @@ enum class TokenKind {
     Begin,
     Set,
     Bang,
+    Comma,
+    LBracket,
+    RBracket,
+    VectorKw,
+    Length,
     Eof,
     Error
 };

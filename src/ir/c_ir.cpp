@@ -48,6 +48,27 @@ std::string dump_cexpr(const CExpr &e) {
     if (const auto *ne = std::get_if<CNotExpr>(&e)) {
         return "(not " + dump_atom(ne->operand) + ")";
     }
+    if (const auto *ae = std::get_if<CAllocateExpr>(&e)) {
+        return "(allocate " + std::to_string(ae->len) + " " +
+               ae->type->dump() + ")";
+    }
+    if (const auto *vr = std::get_if<CVectorRefExpr>(&e)) {
+        return "(vector-ref " + dump_atom(vr->vec) + " " +
+               std::to_string(vr->index) + ")";
+    }
+    if (const auto *vs = std::get_if<CVectorSetExpr>(&e)) {
+        return "(vector-set! " + dump_atom(vs->vec) + " " +
+               std::to_string(vs->index) + " " + dump_atom(vs->val) + ")";
+    }
+    if (const auto *vl = std::get_if<CVectorLengthExpr>(&e)) {
+        return "(vector-length " + dump_atom(vl->vec) + ")";
+    }
+    if (const auto *gv = std::get_if<CGlobalValueExpr>(&e)) {
+        return "(global-value " + gv->name + ")";
+    }
+    if (const auto *ce = std::get_if<CCollectExpr>(&e)) {
+        return "(collect " + std::to_string(ce->bytes) + ")";
+    }
     return "?";
 }
 

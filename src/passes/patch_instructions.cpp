@@ -4,7 +4,10 @@
 
 namespace {
 
-bool is_mem(const x86::Arg &a) { return std::holds_alternative<x86::Deref>(a); }
+bool is_mem(const x86::Arg &a) {
+    return std::holds_alternative<x86::Deref>(a) ||
+           std::holds_alternative<x86::GlobalArg>(a);
+}
 
 bool args_equal(const x86::Arg &a, const x86::Arg &b) {
     if (const auto *da = std::get_if<x86::Deref>(&a)) {
@@ -71,6 +74,15 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
         } else {
             out.push_back(instr);
         }
+    } else if (const auto *aq = std::get_if<x86::Andq>(&instr)) {
+        patch_two_arg(aq->src, aq->dst,
+            [](auto s, auto d) { return x86::Instr{x86::Andq{s, d}}; }, out);
+    } else if (const auto *sq = std::get_if<x86::Sarq>(&instr)) {
+        // sarq only needs src as imm or %cl, dst can be mem
+        out.push_back(instr);
+    } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
+        // leaq src, dst — dst must be reg
+        out.push_back(instr);
     } else {
         out.push_back(instr);
     }
@@ -81,7 +93,9 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
 x86::X86Program patch_instructions(const x86::X86Program &prog) {
     x86::X86Program result;
     result.stack_space = prog.stack_space;
+    result.root_stack_space = prog.root_stack_space;
     result.used_callee_saved = prog.used_callee_saved;
+    result.var_types = prog.var_types;
 
     for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
         std::vector<x86::Instr> patched;

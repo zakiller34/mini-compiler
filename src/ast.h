@@ -1,5 +1,7 @@
 #pragma once
 
+#include "type.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -10,7 +12,9 @@ enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
 enum class NodeKind {
   Int, Bool, Var, Read, Unary, Binary, If, Let,
-  While, SetBang, Begin, Void, Get
+  While, SetBang, Begin, Void, Get,
+  Vector, VectorRef, VectorSet, VectorLength,
+  Allocate, Collect, GlobalValue
 };
 
 /// Base class for all expressions in L_While.
@@ -141,6 +145,76 @@ public:
   std::string name;
   explicit GetExpr(std::string n) : name(std::move(n)) {}
   NodeKind kind() const override { return NodeKind::Get; }
+  std::string dump() const override;
+};
+
+/// @brief Tuple constructor: vector(e1, e2, ...)
+class VectorExpr : public Expr {
+public:
+  std::vector<std::unique_ptr<Expr>> elems;
+  explicit VectorExpr(std::vector<std::unique_ptr<Expr>> es)
+      : elems(std::move(es)) {}
+  NodeKind kind() const override { return NodeKind::Vector; }
+  std::string dump() const override;
+};
+
+/// @brief Tuple element access: vec[index]
+class VectorRefExpr : public Expr {
+public:
+  std::unique_ptr<Expr> vec;
+  int64_t index;
+  VectorRefExpr(std::unique_ptr<Expr> v, int64_t i)
+      : vec(std::move(v)), index(i) {}
+  NodeKind kind() const override { return NodeKind::VectorRef; }
+  std::string dump() const override;
+};
+
+/// @brief Tuple element mutation: vec[index] = val
+class VectorSetExpr : public Expr {
+public:
+  std::unique_ptr<Expr> vec;
+  int64_t index;
+  std::unique_ptr<Expr> val;
+  VectorSetExpr(std::unique_ptr<Expr> v, int64_t i, std::unique_ptr<Expr> va)
+      : vec(std::move(v)), index(i), val(std::move(va)) {}
+  NodeKind kind() const override { return NodeKind::VectorSet; }
+  std::string dump() const override;
+};
+
+/// @brief Tuple length: length(vec)
+class VectorLengthExpr : public Expr {
+public:
+  std::unique_ptr<Expr> vec;
+  explicit VectorLengthExpr(std::unique_ptr<Expr> v) : vec(std::move(v)) {}
+  NodeKind kind() const override { return NodeKind::VectorLength; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by expose_allocation: allocate(len, type)
+class AllocateExpr : public Expr {
+public:
+  int64_t len;
+  TypePtr type;
+  AllocateExpr(int64_t l, TypePtr t) : len(l), type(std::move(t)) {}
+  NodeKind kind() const override { return NodeKind::Allocate; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by expose_allocation: collect(bytes)
+class CollectExpr : public Expr {
+public:
+  int64_t bytes;
+  explicit CollectExpr(int64_t b) : bytes(b) {}
+  NodeKind kind() const override { return NodeKind::Collect; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by expose_allocation: global_value(name)
+class GlobalValueExpr : public Expr {
+public:
+  std::string name;
+  explicit GlobalValueExpr(std::string n) : name(std::move(n)) {}
+  NodeKind kind() const override { return NodeKind::GlobalValue; }
   std::string dump() const override;
 };
 

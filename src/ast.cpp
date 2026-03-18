@@ -139,6 +139,57 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
   case NodeKind::Get:
     out += "(get! " + static_cast<const GetExpr *>(e)->name + ")";
     break;
+  case NodeKind::Vector: {
+    auto *ve = static_cast<const VectorExpr *>(e);
+    out += "(vector";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    for (int i = static_cast<int>(ve->elems.size()) - 1; i >= 0; --i) {
+      tasks.push_back({Action::Visit, ve->elems[i].get(), ""});
+      tasks.push_back({Action::Append, nullptr, " "});
+    }
+    break;
+  }
+  case NodeKind::VectorRef: {
+    auto *vr = static_cast<const VectorRefExpr *>(e);
+    out += "(vector-ref ";
+    tasks.push_back({Action::Append, nullptr,
+        " " + std::to_string(vr->index) + ")"});
+    tasks.push_back({Action::Visit, vr->vec.get(), ""});
+    break;
+  }
+  case NodeKind::VectorSet: {
+    auto *vs = static_cast<const VectorSetExpr *>(e);
+    out += "(vector-set! ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, vs->val.get(), ""});
+    tasks.push_back({Action::Append, nullptr,
+        " " + std::to_string(vs->index) + " "});
+    tasks.push_back({Action::Visit, vs->vec.get(), ""});
+    break;
+  }
+  case NodeKind::VectorLength: {
+    auto *vl = static_cast<const VectorLengthExpr *>(e);
+    out += "(vector-length ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, vl->vec.get(), ""});
+    break;
+  }
+  case NodeKind::Allocate: {
+    auto *ae = static_cast<const AllocateExpr *>(e);
+    out += "(allocate " + std::to_string(ae->len) + " " +
+           ae->type->dump() + ")";
+    break;
+  }
+  case NodeKind::Collect: {
+    auto *ce = static_cast<const CollectExpr *>(e);
+    out += "(collect " + std::to_string(ce->bytes) + ")";
+    break;
+  }
+  case NodeKind::GlobalValue: {
+    auto *gv = static_cast<const GlobalValueExpr *>(e);
+    out += "(global-value " + gv->name + ")";
+    break;
+  }
   }
 }
 
@@ -192,6 +243,20 @@ std::string BeginExpr::dump() const { return dump_iterative(this); }
 std::string VoidExpr::dump() const { return dump_iterative(this); }
 
 std::string GetExpr::dump() const { return dump_iterative(this); }
+
+std::string VectorExpr::dump() const { return dump_iterative(this); }
+
+std::string VectorRefExpr::dump() const { return dump_iterative(this); }
+
+std::string VectorSetExpr::dump() const { return dump_iterative(this); }
+
+std::string VectorLengthExpr::dump() const { return dump_iterative(this); }
+
+std::string AllocateExpr::dump() const { return dump_iterative(this); }
+
+std::string CollectExpr::dump() const { return dump_iterative(this); }
+
+std::string GlobalValueExpr::dump() const { return dump_iterative(this); }
 
 /// @brief Dump program as S-expr: (program body)
 /// @requires body != nullptr

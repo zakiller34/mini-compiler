@@ -13,6 +13,8 @@ std::string emit_arg(const x86::Arg &a) {
         return x86::reg_name(reg->reg);
     if (const auto *deref = std::get_if<x86::Deref>(&a))
         return std::to_string(deref->offset) + "(" + x86::reg_name(deref->reg) + ")";
+    if (const auto *ga = std::get_if<x86::GlobalArg>(&a))
+        return ga->name + "(%rip)";
     return "var:" + std::get<x86::VarArg>(a).name;
 }
 
@@ -50,6 +52,12 @@ std::string emit_instr(const x86::Instr &i) {
         return "    retq";
     if (const auto *j = std::get_if<x86::JmpIf>(&i))
         return "    j" + x86::cc_name(j->cc) + " " + j->label;
+    if (const auto *aq = std::get_if<x86::Andq>(&i))
+        return "    andq " + emit_arg(aq->src) + ", " + emit_arg(aq->dst);
+    if (const auto *sq = std::get_if<x86::Sarq>(&i))
+        return "    sarq " + emit_arg(sq->src) + ", " + emit_arg(sq->dst);
+    if (const auto *lq = std::get_if<x86::Leaq>(&i))
+        return "    leaq " + emit_arg(lq->src) + ", " + emit_arg(lq->dst);
     return "    jmp " + std::get<x86::Jmp>(i).label;
 }
 

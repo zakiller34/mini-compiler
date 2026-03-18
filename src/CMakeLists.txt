@@ -5,6 +5,7 @@ add_library(mc_lib STATIC
     ast.cpp
     lexer.cpp
     parser.cpp
+    type.cpp
     type_checker.cpp
     ir/c_ir.cpp
     ir/x86_ir.cpp
@@ -12,6 +13,7 @@ add_library(mc_lib STATIC
     passes/shrink.cpp
     passes/uniquify.cpp
     passes/uncover_get.cpp
+    passes/expose_allocation.cpp
     passes/rco.cpp
     passes/explicate_control.cpp
     passes/select_instructions.cpp

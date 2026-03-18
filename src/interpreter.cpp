@@ -21,17 +21,28 @@ struct WhileCondFrame { const Expr *cond; const Expr *body; };
 struct WhileBodyFrame { const Expr *cond; const Expr *body; };
 struct SetBangFrame { std::string var; };
 struct BeginFrame { std::vector<const Expr *> remaining; };
+struct VectorBuildFrame { size_t total; std::vector<const Expr *> remaining; };
+struct VectorRefVecFrame { int64_t index; };
+struct VectorSetVecFrame { int64_t index; const Expr *val; };
+struct VectorSetValFrame { int64_t index; };
+struct VectorLengthVecFrame {};
 
 using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            BinLhsFrame, BinRhsFrame, IfCondFrame,
                            WhileCondFrame, WhileBodyFrame,
-                           SetBangFrame, BeginFrame>;
+                           SetBangFrame, BeginFrame,
+                           VectorBuildFrame, VectorRefVecFrame,
+                           VectorSetVecFrame, VectorSetValFrame,
+                           VectorLengthVecFrame>;
 
 /// @brief Get int64_t from Value or throw
 int64_t as_int(const Value &v) { return std::get<int64_t>(v); }
 
 /// @brief Get bool from Value or throw
 bool as_bool(const Value &v) { return std::get<bool>(v); }
+
+/// @brief Get tuple from Value or throw
+Tuple as_tuple(const Value &v) { return std::get<Tuple>(v); }
 
 /// @brief Evaluate leaf or push continuation frames
 /// @requires e != nullptr
@@ -117,6 +128,41 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
     case NodeKind::Get:
         values.push_back(env.at(static_cast<const GetExpr *>(e)->name));
         break;
+    case NodeKind::Vector: {
+        auto *ve = static_cast<const VectorExpr *>(e);
+        std::vector<const Expr *> remaining;
+        for (size_t i = 1; i < ve->elems.size(); ++i) {
+            remaining.push_back(ve->elems[i].get());
+        }
+        stack.push_back(VectorBuildFrame{ve->elems.size(),
+                                          std::move(remaining)});
+        stack.push_back(EvalFrame{ve->elems[0].get()});
+        break;
+    }
+    case NodeKind::VectorRef: {
+        auto *vr = static_cast<const VectorRefExpr *>(e);
+        stack.push_back(VectorRefVecFrame{vr->index});
+        stack.push_back(EvalFrame{vr->vec.get()});
+        break;
+    }
+    case NodeKind::VectorSet: {
+        auto *vs = static_cast<const VectorSetExpr *>(e);
+        stack.push_back(VectorSetVecFrame{vs->index, vs->val.get()});
+        stack.push_back(EvalFrame{vs->vec.get()});
+        break;
+    }
+    case NodeKind::VectorLength: {
+        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        stack.push_back(VectorLengthVecFrame{});
+        stack.push_back(EvalFrame{vl->vec.get()});
+        break;
+    }
+    case NodeKind::Allocate:
+    case NodeKind::Collect:
+    case NodeKind::GlobalValue:
+        // These are compiler-internal nodes, not interpreted
+        values.push_back(std::monostate{});
+        break;
     }
 }
 
@@ -182,7 +228,6 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
     } else if (auto *wc = std::get_if<WhileCondFrame>(&frame)) {
         Value cond = values.back(); values.pop_back();
         if (as_bool(cond)) {
-            // Re-push while loop (cond check after body)
             stack.push_back(WhileBodyFrame{wc->cond, wc->body});
             stack.push_back(EvalFrame{wc->body});
         } else {
@@ -190,7 +235,6 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         }
     } else if (auto *wb = std::get_if<WhileBodyFrame>(&frame)) {
         values.pop_back(); // discard body result
-        // Re-evaluate condition
         stack.push_back(WhileCondFrame{wb->cond, wb->body});
         stack.push_back(EvalFrame{wb->cond});
     } else if (auto *sb = std::get_if<SetBangFrame>(&frame)) {
@@ -208,6 +252,41 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
             stack.push_back(BeginFrame{std::move(rest)});
             stack.push_back(EvalFrame{next});
         }
+    } else if (auto *vb = std::get_if<VectorBuildFrame>(&frame)) {
+        if (vb->remaining.empty()) {
+            // Collect all elements from value stack
+            auto tup = std::make_shared<TupleData>();
+            tup->elems.resize(vb->total);
+            for (size_t i = 0; i < vb->total; ++i) {
+                tup->elems[vb->total - 1 - i] = values.back();
+                values.pop_back();
+            }
+            values.push_back(Tuple{tup});
+        } else {
+            const Expr *next = vb->remaining[0];
+            std::vector<const Expr *> rest(vb->remaining.begin() + 1,
+                                            vb->remaining.end());
+            stack.push_back(VectorBuildFrame{vb->total, std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
+    } else if (auto *vr = std::get_if<VectorRefVecFrame>(&frame)) {
+        Value vec_val = values.back(); values.pop_back();
+        auto tup = as_tuple(vec_val);
+        values.push_back(tup->elems[static_cast<size_t>(vr->index)]);
+    } else if (auto *vs = std::get_if<VectorSetVecFrame>(&frame)) {
+        // vec is on stack, now eval val
+        stack.push_back(VectorSetValFrame{vs->index});
+        stack.push_back(EvalFrame{vs->val});
+    } else if (auto *vs = std::get_if<VectorSetValFrame>(&frame)) {
+        Value val = values.back(); values.pop_back();
+        Value vec_val = values.back(); values.pop_back();
+        auto tup = as_tuple(vec_val);
+        tup->elems[static_cast<size_t>(vs->index)] = val;
+        values.push_back(std::monostate{}); // set returns void
+    } else if (std::get_if<VectorLengthVecFrame>(&frame) != nullptr) {
+        Value vec_val = values.back(); values.pop_back();
+        auto tup = as_tuple(vec_val);
+        values.push_back(static_cast<int64_t>(tup->elems.size()));
     }
 }
 

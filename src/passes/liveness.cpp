@@ -36,6 +36,12 @@ std::set<std::string> instr_reads(const x86::Instr &instr) {
         var_from_arg(mz->src, result);
     } else if (const auto *p = std::get_if<x86::Pushq>(&instr)) {
         var_from_arg(p->src, result);
+    } else if (const auto *aq = std::get_if<x86::Andq>(&instr)) {
+        var_from_arg(aq->src, result); var_from_arg(aq->dst, result);
+    } else if (const auto *sq = std::get_if<x86::Sarq>(&instr)) {
+        var_from_arg(sq->src, result); var_from_arg(sq->dst, result);
+    } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
+        var_from_arg(lq->src, result);
     }
     // SetCC, JmpIf, Jmp, Callq, Retq, Popq: no var reads
     return result;
@@ -61,6 +67,12 @@ std::set<std::string> instr_writes(const x86::Instr &instr) {
         var_from_arg(mz->dst, result);
     } else if (const auto *p = std::get_if<x86::Popq>(&instr)) {
         var_from_arg(p->dst, result);
+    } else if (const auto *aq = std::get_if<x86::Andq>(&instr)) {
+        var_from_arg(aq->dst, result);
+    } else if (const auto *sq = std::get_if<x86::Sarq>(&instr)) {
+        var_from_arg(sq->dst, result);
+    } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
+        var_from_arg(lq->dst, result);
     }
     // Cmpq, JmpIf, Jmp, Callq, Retq, Pushq: no var writes
     return result;

@@ -29,17 +29,18 @@ Create `.changeset/NNN_theme.md` per phase commit or big change. evalite-style f
 ## Pipeline
 ```
 Source (.mc) -> [Lexer] -> [Parser] -> AST
-  -> [Uniquify] -> [RCO] -> [Explicate Control] -> C_Var IR
+  -> [Shrink] -> [Uniquify] -> [Uncover Get] -> [Expose Allocation]
+  -> [RCO] -> [Explicate Control] -> C_Var IR
   -> [Select Instructions] -> [Assign Homes] -> [Patch Instructions]
   -> [Prelude/Conclusion] -> [Emit] -> x86-64 AT&T assembly (.s)
 ```
 
 ## Structure
 ```
-src/              lexer.h/.cpp, parser.h/.cpp, ast.h/.cpp, interpreter.h/.cpp
-src/passes/       one .h/.cpp per pass (uniquify, rco, explicate_control, ...)
+src/              lexer, parser, ast, interpreter, type.h/.cpp, type_checker
+src/passes/       one .h/.cpp per pass (uniquify, expose_allocation, rco, ...)
 src/ir/           c_ir.h (basic blocks), x86_ir.h (pseudo-x86)
-runtime/          runtime.c (read_int, print_int)
+runtime/          runtime.c (read_int, print_int, GC: initialize, collect)
 tests/unit/       Google Test per-pass: test_{pass}.cpp
 tests/integration/ end-to-end pipeline tests
 tests/programs/   .mc files in phaseN/ subdirs

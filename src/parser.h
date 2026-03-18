@@ -27,8 +27,11 @@ class ParseError : public std::runtime_error {
 ///            | WHILE '(' expr ')' '{' expr '}'
 ///            | BEGIN '{' expr (';' expr)* '}'
 ///            | SET '!' IDENT expr
+///            | VECTOR '(' expr (',' expr)* ')'
+///            | LENGTH '(' expr ')'
 ///            | VOID
 ///            | '(' expr ')'
+/// postfix    → primary ('[' INT ']' ('=' expr)? )*
 class Parser {
   public:
     explicit Parser(Lexer &lex);
@@ -47,5 +50,6 @@ class Parser {
     std::unique_ptr<Expr> parse_cmp_expr();
     std::unique_ptr<Expr> parse_additive();
     std::unique_ptr<Expr> parse_unary();
+    std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
 };

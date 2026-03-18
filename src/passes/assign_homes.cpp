@@ -41,6 +41,12 @@ x86::Instr replace_instr(const x86::Instr &instr,
         return x86::Pushq{replace_arg(p->src, homes)};
     if (const auto *p = std::get_if<x86::Popq>(&instr))
         return x86::Popq{replace_arg(p->dst, homes)};
+    if (const auto *aq = std::get_if<x86::Andq>(&instr))
+        return x86::Andq{replace_arg(aq->src, homes), replace_arg(aq->dst, homes)};
+    if (const auto *sq = std::get_if<x86::Sarq>(&instr))
+        return x86::Sarq{replace_arg(sq->src, homes), replace_arg(sq->dst, homes)};
+    if (const auto *lq = std::get_if<x86::Leaq>(&instr))
+        return x86::Leaq{replace_arg(lq->src, homes), replace_arg(lq->dst, homes)};
     return instr;
 }
 
@@ -71,6 +77,12 @@ void collect_vars_instr(const x86::Instr &instr, std::set<std::string> &vars) {
         collect_var_from_arg(p->src, vars);
     } else if (const auto *p = std::get_if<x86::Popq>(&instr)) {
         collect_var_from_arg(p->dst, vars);
+    } else if (const auto *aq = std::get_if<x86::Andq>(&instr)) {
+        collect_var_from_arg(aq->src, vars); collect_var_from_arg(aq->dst, vars);
+    } else if (const auto *sq = std::get_if<x86::Sarq>(&instr)) {
+        collect_var_from_arg(sq->src, vars); collect_var_from_arg(sq->dst, vars);
+    } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
+        collect_var_from_arg(lq->src, vars); collect_var_from_arg(lq->dst, vars);
     }
 }
 
@@ -115,6 +127,7 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
     std::set<x86::Reg> used_callee;
     int64_t spill_count = 0;
 
+    int64_t root_spill_count = 0;
     for (const auto &[loc, color] : coloring) {
         if (const auto *name = std::get_if<std::string>(&loc)) {
             if (color < num_allocable_regs()) {
@@ -122,8 +135,18 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
                 homes[*name] = x86::RegArg{reg};
                 if (callee_saved.count(reg) > 0) used_callee.insert(reg);
             } else {
-                ++spill_count;
-                homes[*name] = x86::Deref{x86::Reg::Rbp, -8 * spill_count};
+                // Check if tuple-typed → root stack (R15), else regular stack
+                auto vt = prog.var_types.find(*name);
+                if (vt != prog.var_types.end() &&
+                    is_vector_type(vt->second)) {
+                    homes[*name] = x86::Deref{x86::Reg::R15,
+                                               8 * root_spill_count};
+                    ++root_spill_count;
+                } else {
+                    ++spill_count;
+                    homes[*name] = x86::Deref{x86::Reg::Rbp,
+                                               -8 * spill_count};
+                }
             }
         }
     }
@@ -144,7 +167,10 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
 
     x86::X86Program result;
     result.stack_space = stack_space;
+    int64_t rss = root_spill_count * 8;
+    result.root_stack_space = (rss > prog.root_stack_space) ? rss : prog.root_stack_space;
     result.used_callee_saved = used_callee;
+    result.var_types = prog.var_types;
 
     for (const auto &[label, blk] : prog.blocks) {
         x86::Block out_blk;

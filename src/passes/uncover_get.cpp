@@ -65,8 +65,29 @@ std::set<std::string> collect_mutable_vars(const Expr *root) {
             }
             break;
         }
+        case NodeKind::Vector: {
+            auto *ve = static_cast<const VectorExpr *>(e);
+            for (const auto &el : ve->elems) {
+                worklist.push_back(el.get());
+            }
+            break;
+        }
+        case NodeKind::VectorRef:
+            worklist.push_back(
+                static_cast<const VectorRefExpr *>(e)->vec.get());
+            break;
+        case NodeKind::VectorSet: {
+            auto *vs = static_cast<const VectorSetExpr *>(e);
+            worklist.push_back(vs->vec.get());
+            worklist.push_back(vs->val.get());
+            break;
+        }
+        case NodeKind::VectorLength:
+            worklist.push_back(
+                static_cast<const VectorLengthExpr *>(e)->vec.get());
+            break;
         default:
-            break; // Int, Bool, Var, Read, Void, Get: no children
+            break; // Int, Bool, Var, Read, Void, Get, Allocate, etc.: no children
         }
     }
     return result;
@@ -87,12 +108,20 @@ struct WhileBuildCond { const Expr *body; };
 struct WhileBuildBody {};
 struct SetBangBuild { std::string var; };
 struct BeginBuild { std::vector<const Expr *> remaining; size_t total; };
+struct VectorBuild { size_t total; std::vector<const Expr *> remaining; };
+struct VectorRefBuild { int64_t index; };
+struct VectorSetVecBuild { int64_t index; const Expr *val; };
+struct VectorSetValBuild { int64_t index; };
+struct VectorLengthBuild {};
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
                            LetBuildInit, LetBuildBody,
                            WhileBuildCond, WhileBuildBody,
-                           SetBangBuild, BeginBuild>;
+                           SetBangBuild, BeginBuild,
+                           VectorBuild, VectorRefBuild,
+                           VectorSetVecBuild, VectorSetValBuild,
+                           VectorLengthBuild>;
 
 /// @brief Evaluate leaf or push continuation frames for uncover_get
 /// @requires ef.expr != nullptr
@@ -182,6 +211,45 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         results.push_back(std::make_unique<GetExpr>(
             static_cast<const GetExpr *>(e)->name));
         break;
+    case NodeKind::Vector: {
+        auto *ve = static_cast<const VectorExpr *>(e);
+        if (ve->elems.empty()) {
+            results.push_back(std::make_unique<VectorExpr>(
+                std::vector<std::unique_ptr<Expr>>{}));
+        } else {
+            std::vector<const Expr *> remaining;
+            for (size_t i = 1; i < ve->elems.size(); ++i) {
+                remaining.push_back(ve->elems[i].get());
+            }
+            stack.push_back(VectorBuild{ve->elems.size(),
+                                         std::move(remaining)});
+            stack.push_back(EvalFrame{ve->elems[0].get()});
+        }
+        break;
+    }
+    case NodeKind::VectorRef: {
+        auto *vr = static_cast<const VectorRefExpr *>(e);
+        stack.push_back(VectorRefBuild{vr->index});
+        stack.push_back(EvalFrame{vr->vec.get()});
+        break;
+    }
+    case NodeKind::VectorSet: {
+        auto *vs = static_cast<const VectorSetExpr *>(e);
+        stack.push_back(VectorSetVecBuild{vs->index, vs->val.get()});
+        stack.push_back(EvalFrame{vs->vec.get()});
+        break;
+    }
+    case NodeKind::VectorLength: {
+        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        stack.push_back(VectorLengthBuild{});
+        stack.push_back(EvalFrame{vl->vec.get()});
+        break;
+    }
+    case NodeKind::Allocate:
+    case NodeKind::Collect:
+    case NodeKind::GlobalValue:
+        results.push_back(std::make_unique<VoidExpr>());
+        break;
     }
 }
 
@@ -250,6 +318,37 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             stack.push_back(BeginBuild{std::move(rest), bb->total});
             stack.push_back(EvalFrame{next});
         }
+    } else if (auto *vb = std::get_if<VectorBuild>(&frame)) {
+        if (vb->remaining.empty()) {
+            std::vector<std::unique_ptr<Expr>> elems;
+            for (size_t i = 0; i < vb->total; ++i) {
+                elems.push_back(std::move(results.back()));
+                results.pop_back();
+            }
+            std::reverse(elems.begin(), elems.end());
+            results.push_back(std::make_unique<VectorExpr>(std::move(elems)));
+        } else {
+            const Expr *next = vb->remaining[0];
+            std::vector<const Expr *> rest(vb->remaining.begin() + 1,
+                                            vb->remaining.end());
+            stack.push_back(VectorBuild{vb->total, std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
+    } else if (auto *vr = std::get_if<VectorRefBuild>(&frame)) {
+        auto vec = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<VectorRefExpr>(
+            std::move(vec), vr->index));
+    } else if (auto *vsv = std::get_if<VectorSetVecBuild>(&frame)) {
+        stack.push_back(VectorSetValBuild{vsv->index});
+        stack.push_back(EvalFrame{vsv->val});
+    } else if (auto *vs = std::get_if<VectorSetValBuild>(&frame)) {
+        auto val = std::move(results.back()); results.pop_back();
+        auto vec = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<VectorSetExpr>(
+            std::move(vec), vs->index, std::move(val)));
+    } else if (std::get_if<VectorLengthBuild>(&frame) != nullptr) {
+        auto vec = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<VectorLengthExpr>(std::move(vec)));
     }
 }
 

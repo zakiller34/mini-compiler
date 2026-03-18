@@ -53,6 +53,9 @@ Token Lexer::next() {
     case '}': advance(); return {TokenKind::RBrace, "}", 0};
     case ';': advance(); return {TokenKind::Semicolon, ";", 0};
     case '!': advance(); return {TokenKind::Bang, "!", 0};
+    case ',': advance(); return {TokenKind::Comma, ",", 0};
+    case '[': advance(); return {TokenKind::LBracket, "[", 0};
+    case ']': advance(); return {TokenKind::RBracket, "]", 0};
     case '=':
         advance();
         if (cur_ == '=') { advance(); return {TokenKind::EqEq, "==", 0}; }
@@ -103,6 +106,8 @@ Token Lexer::next() {
         if (id == "void") { return {TokenKind::Void, id, 0}; }
         if (id == "begin") { return {TokenKind::Begin, id, 0}; }
         if (id == "set") { return {TokenKind::Set, id, 0}; }
+        if (id == "vector") { return {TokenKind::VectorKw, id, 0}; }
+        if (id == "length") { return {TokenKind::Length, id, 0}; }
         return {TokenKind::Ident, id, 0};
     }
 

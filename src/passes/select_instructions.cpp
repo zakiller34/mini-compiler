@@ -54,6 +54,58 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
     } else if (const auto *ne = std::get_if<cir::CNotExpr>(&expr)) {
         instrs.push_back(x86::Movq{atom_to_arg(ne->operand), dst});
         instrs.push_back(x86::Xorq{x86::Imm{1}, dst});
+    } else if (const auto *ae = std::get_if<cir::CAllocateExpr>(&expr)) {
+        // Bump free_ptr: movq free_ptr(%rip) -> r11, addq 8*(len+1) -> free_ptr
+        // Store tag at 0(%r11), movq %r11 -> dst
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        x86::Arg fp = x86::GlobalArg{"free_ptr"};
+        int64_t n = ae->len;
+        int64_t bytes = 8 * (n + 1);
+        // Compute GC tag: bit0=0, bits1-6=length, bits7+=pointer mask
+        int64_t tag = (n & 0x3F) << 1; // length in bits 1-6
+        // Set pointer mask bits 7+ for vector-typed elements
+        for (int64_t i = 0; i < n; ++i) {
+            if (i < static_cast<int64_t>(ae->type->elem_types.size()) &&
+                is_vector_type(ae->type->elem_types[static_cast<size_t>(i)])) {
+                tag |= (1LL << (7 + i));
+            }
+        }
+        instrs.push_back(x86::Movq{fp, r11});
+        instrs.push_back(x86::Addq{x86::Imm{bytes}, fp});
+        instrs.push_back(x86::Movq{x86::Imm{tag}, x86::Deref{x86::Reg::R11, 0}});
+        instrs.push_back(x86::Movq{r11, dst});
+    } else if (const auto *vr = std::get_if<cir::CVectorRefExpr>(&expr)) {
+        // movq vec -> r11, movq 8*(i+1)(%r11) -> dst
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        instrs.push_back(x86::Movq{atom_to_arg(vr->vec), r11});
+        instrs.push_back(x86::Movq{
+            x86::Deref{x86::Reg::R11, 8 * (vr->index + 1)}, dst});
+    } else if (const auto *vs = std::get_if<cir::CVectorSetExpr>(&expr)) {
+        // movq vec -> r11, movq val -> 8*(i+1)(%r11)
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        instrs.push_back(x86::Movq{atom_to_arg(vs->vec), r11});
+        instrs.push_back(x86::Movq{atom_to_arg(vs->val),
+            x86::Deref{x86::Reg::R11, 8 * (vs->index + 1)}});
+        // vector-set! returns void, store 0 in dst
+        instrs.push_back(x86::Movq{x86::Imm{0}, dst});
+    } else if (const auto *vl = std::get_if<cir::CVectorLengthExpr>(&expr)) {
+        // movq vec -> r11, movq 0(%r11) -> dst (tag)
+        // andq $0x7E -> dst, sarq $1 -> dst
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        instrs.push_back(x86::Movq{atom_to_arg(vl->vec), r11});
+        instrs.push_back(x86::Movq{x86::Deref{x86::Reg::R11, 0}, dst});
+        instrs.push_back(x86::Andq{x86::Imm{0x7E}, dst});
+        instrs.push_back(x86::Sarq{x86::Imm{1}, dst});
+    } else if (const auto *gv = std::get_if<cir::CGlobalValueExpr>(&expr)) {
+        instrs.push_back(x86::Movq{x86::GlobalArg{gv->name}, dst});
+    } else if (const auto *ce = std::get_if<cir::CCollectExpr>(&expr)) {
+        // movq %r15 -> %rdi, movq $bytes -> %rsi, callq collect
+        instrs.push_back(x86::Movq{x86::RegArg{x86::Reg::R15},
+                                     x86::RegArg{x86::Reg::Rdi}});
+        instrs.push_back(x86::Movq{x86::Imm{ce->bytes},
+                                     x86::RegArg{x86::Reg::Rsi}});
+        instrs.push_back(x86::Callq{"collect", 2});
+        instrs.push_back(x86::Movq{x86::Imm{0}, dst});
     }
 }
 
@@ -84,8 +136,28 @@ x86::Block select_block(const cir::BasicBlock &blk) {
 
 } // namespace
 
+/// @brief Check if CProgram has any tuple/GC operations
+static bool has_gc_ops(const cir::CProgram &prog) {
+    for (const auto &[label, blk] : prog.blocks) {
+        for (const auto &stmt : blk.stmts) {
+            if (std::holds_alternative<cir::CAllocateExpr>(stmt.expr) ||
+                std::holds_alternative<cir::CCollectExpr>(stmt.expr) ||
+                std::holds_alternative<cir::CGlobalValueExpr>(stmt.expr)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 x86::X86Program select_instructions(const cir::CProgram &prog) {
     x86::X86Program result;
+    result.var_types = prog.var_types;
+    // If program has GC operations, set a minimal root_stack_space
+    // to trigger GC initialization in prelude
+    if (has_gc_ops(prog)) {
+        result.root_stack_space = 8; // at least one slot
+    }
     for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
         result.blocks[it->first] = select_block(it->second);
     }

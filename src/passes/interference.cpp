@@ -117,6 +117,12 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                 dst_arg = &n->dst;
             } else if (const auto *x = std::get_if<x86::Xorq>(&instr)) {
                 dst_arg = &x->dst;
+            } else if (const auto *aq = std::get_if<x86::Andq>(&instr)) {
+                dst_arg = &aq->dst;
+            } else if (const auto *sq = std::get_if<x86::Sarq>(&instr)) {
+                dst_arg = &sq->dst;
+            } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
+                dst_arg = &lq->dst;
             } else if (const auto *sc = std::get_if<x86::SetCC>(&instr)) {
                 dst_arg = &sc->dst;
             } else if (const auto *mz = std::get_if<x86::Movzbq>(&instr)) {

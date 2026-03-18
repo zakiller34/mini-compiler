@@ -9,6 +9,7 @@
 #include "passes/assign_homes.h"
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
+#include "passes/expose_allocation.h"
 #include "passes/patch_instructions.h"
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
@@ -22,7 +23,8 @@ static std::string run_pipeline(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
   auto s0__ = shrink(prog); auto u = uniquify(*s0__);
   auto ug = uncover_get(*u);
-  auto r = remove_complex_operands(*ug);
+  auto ea = expose_allocation(*ug);
+  auto r = remove_complex_operands(*ea);
   auto c = explicate_control(*r);
   auto s = select_instructions(c);
   auto a = assign_homes(s);
@@ -269,4 +271,56 @@ TEST(Pipeline, NestedWhile) {
     EXPECT_FALSE(asm_str.empty());
     // Should have loop structure with cmpq + jmpif
     EXPECT_NE(asm_str.find("cmpq"), std::string::npos);
+}
+
+// ---- Phase 5: tuple/vector tests ----
+
+TEST(Pipeline, SimpleTuple) {
+    // let v = vector(42, 7); v[0]
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(42));
+    elems.push_back(std::make_unique<IntExpr>(7));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorRefExpr>(
+            std::make_unique<VarExpr>("v"), 0));
+    auto asm_str = run_pipeline(std::move(e));
+    EXPECT_FALSE(asm_str.empty());
+    EXPECT_NE(asm_str.find("main"), std::string::npos);
+    // Should have GC initialization
+    EXPECT_NE(asm_str.find("initialize"), std::string::npos);
+}
+
+TEST(Pipeline, TupleSet) {
+    // let v = vector(1); begin { v[0] = 42; v[0] }
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    std::vector<std::unique_ptr<Expr>> bexprs;
+    bexprs.push_back(std::make_unique<VectorSetExpr>(
+        std::make_unique<VarExpr>("v"), 0,
+        std::make_unique<IntExpr>(42)));
+    bexprs.push_back(std::make_unique<VectorRefExpr>(
+        std::make_unique<VarExpr>("v"), 0));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<BeginExpr>(std::move(bexprs)));
+    auto asm_str = run_pipeline(std::move(e));
+    EXPECT_FALSE(asm_str.empty());
+}
+
+TEST(Pipeline, TupleLength) {
+    // let v = vector(1, 2, 3); length(v)
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    elems.push_back(std::make_unique<IntExpr>(2));
+    elems.push_back(std::make_unique<IntExpr>(3));
+    auto e = std::make_unique<LetExpr>(
+        "v", std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<VectorLengthExpr>(
+            std::make_unique<VarExpr>("v")));
+    auto asm_str = run_pipeline(std::move(e));
+    EXPECT_FALSE(asm_str.empty());
+    // Should have andq and sarq for length extraction
+    EXPECT_NE(asm_str.find("andq"), std::string::npos);
+    EXPECT_NE(asm_str.find("sarq"), std::string::npos);
 }
