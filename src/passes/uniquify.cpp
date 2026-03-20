@@ -1,10 +1,14 @@
 #include "uniquify.h"
 
+#include "clone_leaf.h"
+
 #include <algorithm>
 #include <map>
 #include <string>
 #include <variant>
 #include <vector>
+
+namespace mc {
 
 namespace {
 
@@ -46,15 +50,11 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     const Expr *e = ef.expr;
     const auto &env = ef.env;
 
+    if (auto leaf = clone_leaf(e)) {
+        results.push_back(std::move(*leaf));
+        return;
+    }
     switch (e->kind()) {
-    case NodeKind::Int:
-        results.push_back(std::make_unique<IntExpr>(
-            expr_cast<IntExpr>(e)->value));
-        break;
-    case NodeKind::Bool:
-        results.push_back(std::make_unique<BoolExpr>(
-            expr_cast<BoolExpr>(e)->value));
-        break;
     case NodeKind::Var: {
         auto *ve = expr_cast<VarExpr>(e);
         auto it = env.find(ve->name);
@@ -62,9 +62,6 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         results.push_back(std::make_unique<VarExpr>(name));
         break;
     }
-    case NodeKind::Read:
-        results.push_back(std::make_unique<ReadExpr>());
-        break;
     case NodeKind::Unary: {
         auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryBuild{ue->op});
@@ -121,9 +118,6 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         }
         break;
     }
-    case NodeKind::Void:
-        results.push_back(std::make_unique<VoidExpr>());
-        break;
     case NodeKind::Get: {
         auto *ge = expr_cast<GetExpr>(e);
         auto it = env.find(ge->name);
@@ -294,3 +288,5 @@ std::unique_ptr<Program> uniquify(const Program &prog) {
     }
     return std::make_unique<Program>(std::move(results.back()));
 }
+
+} // namespace mc

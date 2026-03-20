@@ -1,10 +1,14 @@
 #include "rco.h"
 
+#include "clone_leaf.h"
+
 #include <algorithm>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
+
+namespace mc {
 
 namespace {
 
@@ -77,15 +81,11 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<Result> &results, int &tmp_counter) {
     const Expr *e = ef.expr;
 
+    if (auto leaf = clone_leaf(e)) {
+        results.push_back({std::move(*leaf), {}});
+        return;
+    }
     switch (e->kind()) {
-    case NodeKind::Int:
-        results.push_back({std::make_unique<IntExpr>(
-            expr_cast<IntExpr>(e)->value), {}});
-        break;
-    case NodeKind::Bool:
-        results.push_back({std::make_unique<BoolExpr>(
-            expr_cast<BoolExpr>(e)->value), {}});
-        break;
     case NodeKind::Var:
         results.push_back({std::make_unique<VarExpr>(
             expr_cast<VarExpr>(e)->name), {}});
@@ -149,9 +149,6 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         }
         break;
     }
-    case NodeKind::Void:
-        results.push_back({std::make_unique<VoidExpr>(), {}});
-        break;
     case NodeKind::Get:
         results.push_back({std::make_unique<GetExpr>(
             expr_cast<GetExpr>(e)->name), {}});
@@ -353,3 +350,5 @@ std::unique_ptr<Program> remove_complex_operands(const Program &prog) {
     auto body = wrap_bindings(std::move(res.expr), res.bindings);
     return std::make_unique<Program>(std::move(body));
 }
+
+} // namespace mc

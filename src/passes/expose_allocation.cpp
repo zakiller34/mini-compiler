@@ -1,10 +1,14 @@
 #include "expose_allocation.h"
 
+#include "clone_leaf.h"
+
 #include <algorithm>
 #include <cassert>
 #include <string>
 #include <variant>
 #include <vector>
+
+namespace mc {
 
 namespace {
 
@@ -73,24 +77,14 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
     const Expr *e = ef.expr;
 
+    if (auto leaf = clone_leaf(e)) {
+        results.push_back(std::move(*leaf));
+        return;
+    }
     switch (e->kind()) {
-    case NodeKind::Int:
-        results.push_back(std::make_unique<IntExpr>(
-            expr_cast<IntExpr>(e)->value));
-        break;
-    case NodeKind::Bool:
-        results.push_back(std::make_unique<BoolExpr>(
-            expr_cast<BoolExpr>(e)->value));
-        break;
     case NodeKind::Var:
         results.push_back(std::make_unique<VarExpr>(
             expr_cast<VarExpr>(e)->name));
-        break;
-    case NodeKind::Read:
-        results.push_back(std::make_unique<ReadExpr>());
-        break;
-    case NodeKind::Void:
-        results.push_back(std::make_unique<VoidExpr>());
         break;
     case NodeKind::Get:
         results.push_back(std::make_unique<GetExpr>(
@@ -367,3 +361,5 @@ std::unique_ptr<Program> expose_allocation(const Program &prog) {
     }
     return std::make_unique<Program>(std::move(results.back()));
 }
+
+} // namespace mc

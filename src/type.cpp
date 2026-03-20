@@ -2,13 +2,16 @@
 
 #include <string>
 
+namespace mc {
+
 bool Type::operator==(const Type &other) const {
     if (kind != other.kind) return false;
     if (kind != TypeKind::Vector) return true;
     if (elem_types.size() != other.elem_types.size()) return false;
-    // invariant: elem_types[0..i) match
-    for (size_t i = 0; i < elem_types.size(); ++i) {
-        if (*elem_types[i] != *other.elem_types[i]) return false;
+    // invariant: checked[0..j) all match
+    auto it = other.elem_types.begin();
+    for (const auto &et : elem_types) {
+        if (*et != **it++) return false;
     }
     return true;
 }
@@ -20,10 +23,12 @@ std::string Type::dump() const {
     case TypeKind::Void: return "Void";
     case TypeKind::Vector: {
         std::string result = "Vector(";
-        // invariant: result has dump of elem_types[0..i)
-        for (size_t i = 0; i < elem_types.size(); ++i) {
-            if (i > 0) result += ", ";
-            result += elem_types[i]->dump();
+        // invariant: result has dump of elem_types[0..j)
+        bool first = true;
+        for (const auto &et : elem_types) {
+            if (!first) result += ", ";
+            first = false;
+            result += et->dump();
         }
         result += ")";
         return result;
@@ -54,3 +59,5 @@ TypePtr vector_type(std::vector<TypePtr> elems) {
 bool is_vector_type(const TypePtr &t) {
     return t && t->kind == TypeKind::Vector;
 }
+
+} // namespace mc
