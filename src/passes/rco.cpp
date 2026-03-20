@@ -80,15 +80,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back({std::make_unique<IntExpr>(
-            static_cast<const IntExpr *>(e)->value), {}});
+            expr_cast<IntExpr>(e)->value), {}});
         break;
     case NodeKind::Bool:
         results.push_back({std::make_unique<BoolExpr>(
-            static_cast<const BoolExpr *>(e)->value), {}});
+            expr_cast<BoolExpr>(e)->value), {}});
         break;
     case NodeKind::Var:
         results.push_back({std::make_unique<VarExpr>(
-            static_cast<const VarExpr *>(e)->name), {}});
+            expr_cast<VarExpr>(e)->name), {}});
         break;
     case NodeKind::Read: {
         Result res = {std::make_unique<ReadExpr>(), {}};
@@ -97,44 +97,44 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryBuild{ue->op, ef.need});
         stack.push_back(EvalFrame{ue->operand.get(), Need::Atom});
         break;
     }
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(e);
+        auto *bine = expr_cast<BinaryExpr>(e);
         stack.push_back(BinBuildLhs{bine->op, bine->rhs.get(), ef.need});
         stack.push_back(EvalFrame{bine->lhs.get(), Need::Atom});
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get(), ef.need});
         stack.push_back(EvalFrame{ife->cond.get(), Need::Expr});
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get(), Need::Expr});
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         stack.push_back(WhileBuildCond{we->body.get(), ef.need});
         stack.push_back(EvalFrame{we->cond.get(), Need::Expr});
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         stack.push_back(SetBangBuild{se->var_name, ef.need});
         stack.push_back(EvalFrame{se->expr.get(), Need::Expr});
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         if (beg->exprs.empty()) {
             results.push_back({std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}), {}});
@@ -154,43 +154,43 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     case NodeKind::Get:
         results.push_back({std::make_unique<GetExpr>(
-            static_cast<const GetExpr *>(e)->name), {}});
+            expr_cast<GetExpr>(e)->name), {}});
         break;
     case NodeKind::Allocate: {
-        auto *ae = static_cast<const AllocateExpr *>(e);
+        auto *ae = expr_cast<AllocateExpr>(e);
         Result res = {std::make_unique<AllocateExpr>(ae->len, ae->type), {}};
         atomize(res, ef.need, tmp_counter);
         results.push_back(std::move(res));
         break;
     }
     case NodeKind::Collect: {
-        auto *ce = static_cast<const CollectExpr *>(e);
+        auto *ce = expr_cast<CollectExpr>(e);
         Result res = {std::make_unique<CollectExpr>(ce->bytes), {}};
         atomize(res, ef.need, tmp_counter);
         results.push_back(std::move(res));
         break;
     }
     case NodeKind::GlobalValue: {
-        auto *gv = static_cast<const GlobalValueExpr *>(e);
+        auto *gv = expr_cast<GlobalValueExpr>(e);
         Result res = {std::make_unique<GlobalValueExpr>(gv->name), {}};
         atomize(res, ef.need, tmp_counter);
         results.push_back(std::move(res));
         break;
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         stack.push_back(VectorRefBuild{vr->index, ef.need});
         stack.push_back(EvalFrame{vr->vec.get(), Need::Atom});
         break;
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         stack.push_back(VectorSetVecBuild{vs->index, vs->val.get(), ef.need});
         stack.push_back(EvalFrame{vs->vec.get(), Need::Atom});
         break;
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthBuild{ef.need});
         stack.push_back(EvalFrame{vl->vec.get(), Need::Atom});
         break;

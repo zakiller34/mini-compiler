@@ -87,12 +87,11 @@ std::string dump_tail(const Tail &t) {
 
 std::string CProgram::dump() const {
     std::string result = "(c-program\n";
-    for (auto it = blocks.begin(); it != blocks.end(); ++it) {
-        result += "  (" + it->first + "\n";
-        const auto &blk = it->second;
-        for (size_t i = 0; i < blk.stmts.size(); ++i) {
-            result += "    (assign " + blk.stmts[i].var + " " +
-                      dump_cexpr(blk.stmts[i].expr) + ")\n";
+    for (const auto &[label, blk] : blocks) {
+        result += "  (" + label + "\n";
+        for (const auto &stmt : blk.stmts) {
+            result += "    (assign " + stmt.var + " " +
+                      dump_cexpr(stmt.expr) + ")\n";
         }
         result += "    " + dump_tail(blk.tail) + ")\n";
     }

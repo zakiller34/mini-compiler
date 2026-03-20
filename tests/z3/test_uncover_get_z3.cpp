@@ -29,45 +29,45 @@ static bool z3_no_var_for_mutable(const Program &result,
 
         switch (e->kind()) {
         case NodeKind::Var:
-            if (mvars.count(static_cast<const VarExpr *>(e)->name) != 0U) {
+            if (mvars.count(expr_cast<VarExpr>(e)->name) != 0U) {
                 found_violation = true;
             }
             break;
         case NodeKind::Unary:
             worklist.push_back(
-                static_cast<const UnaryExpr *>(e)->operand.get());
+                expr_cast<UnaryExpr>(e)->operand.get());
             break;
         case NodeKind::Binary: {
-            auto *be = static_cast<const BinaryExpr *>(e);
+            auto *be = expr_cast<BinaryExpr>(e);
             worklist.push_back(be->lhs.get());
             worklist.push_back(be->rhs.get());
             break;
         }
         case NodeKind::If: {
-            auto *ife = static_cast<const IfExpr *>(e);
+            auto *ife = expr_cast<IfExpr>(e);
             worklist.push_back(ife->cond.get());
             worklist.push_back(ife->then_branch.get());
             worklist.push_back(ife->else_branch.get());
             break;
         }
         case NodeKind::Let: {
-            auto *le = static_cast<const LetExpr *>(e);
+            auto *le = expr_cast<LetExpr>(e);
             worklist.push_back(le->init.get());
             worklist.push_back(le->body.get());
             break;
         }
         case NodeKind::While: {
-            auto *we = static_cast<const WhileExpr *>(e);
+            auto *we = expr_cast<WhileExpr>(e);
             worklist.push_back(we->cond.get());
             worklist.push_back(we->body.get());
             break;
         }
         case NodeKind::SetBang:
             worklist.push_back(
-                static_cast<const SetBangExpr *>(e)->expr.get());
+                expr_cast<SetBangExpr>(e)->expr.get());
             break;
         case NodeKind::Begin: {
-            auto *beg = static_cast<const BeginExpr *>(e);
+            auto *beg = expr_cast<BeginExpr>(e);
             for (const auto &sub : beg->exprs) {
                 worklist.push_back(sub.get());
             }

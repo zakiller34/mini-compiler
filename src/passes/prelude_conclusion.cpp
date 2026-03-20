@@ -4,6 +4,15 @@
 
 namespace {
 
+/// @brief Initial heap size in bytes (16 KiB)
+constexpr int64_t kHeapSize = 16384;
+
+/// @brief Initial root stack size in bytes (64 KiB)
+constexpr int64_t kRootstackSize = 65536;
+
+/// @brief Word size in bytes for root stack slot layout
+constexpr int64_t kWordSize = 8;
+
 /// @brief Ordered list of callee-saved regs to push (deterministic order)
 /// @ensures result contains only regs in used_callee_saved, in fixed order
 std::vector<x86::Reg>
@@ -13,9 +22,9 @@ ordered_callee_saved(const std::set<x86::Reg> &used) {
         x86::Reg::Rbx, x86::Reg::R12, x86::Reg::R13, x86::Reg::R14};
     std::vector<x86::Reg> result;
     // invariant: result has matching regs from order[0..i)
-    for (size_t i = 0; i < order.size(); ++i) {
-        if (used.count(order[i]) > 0) {
-            result.push_back(order[i]);
+    for (const auto &reg : order) {
+        if (used.count(reg) > 0) {
+            result.push_back(reg);
         }
     }
     return result;
@@ -45,8 +54,8 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
 
     // Push callee-saved registers
     // invariant: callee_regs[0..i) pushed
-    for (size_t i = 0; i < callee_regs.size(); ++i) {
-        main_block.instrs.push_back(x86::Pushq{x86::RegArg{callee_regs[i]}});
+    for (const auto &reg : callee_regs) {
+        main_block.instrs.push_back(x86::Pushq{x86::RegArg{reg}});
     }
 
     if (prog.stack_space > 0) {
@@ -56,11 +65,11 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
     }
 
     if (gc) {
-        // Initialize GC: movq $16384, %rdi; movq $65536, %rsi; callq initialize
+        // Initialize GC: movq $kHeapSize, %rdi; movq $kRootstackSize, %rsi; callq initialize
         main_block.instrs.push_back(
-            x86::Movq{x86::Imm{16384}, x86::RegArg{x86::Reg::Rdi}});
+            x86::Movq{x86::Imm{kHeapSize}, x86::RegArg{x86::Reg::Rdi}});
         main_block.instrs.push_back(
-            x86::Movq{x86::Imm{65536}, x86::RegArg{x86::Reg::Rsi}});
+            x86::Movq{x86::Imm{kRootstackSize}, x86::RegArg{x86::Reg::Rsi}});
         main_block.instrs.push_back(x86::Callq{"initialize", 2});
 
         // Setup root stack pointer: movq rootstack_begin(%rip), %r15
@@ -69,12 +78,12 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
                        x86::RegArg{x86::Reg::R15}});
 
         // Zero root stack slots
-        int64_t num_slots = prog.root_stack_space / 8;
+        int64_t num_slots = prog.root_stack_space / kWordSize;
         // invariant: slots [0..i) zeroed
         for (int64_t i = 0; i < num_slots; ++i) {
             main_block.instrs.push_back(
                 x86::Movq{x86::Imm{0},
-                           x86::Deref{x86::Reg::R15, 8 * i}});
+                           x86::Deref{x86::Reg::R15, kWordSize * i}});
         }
     }
 

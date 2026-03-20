@@ -63,8 +63,8 @@ std::string emit_instr(const x86::Instr &i) {
 
 std::string emit_block(const std::string &label, const x86::Block &blk) {
     std::string result = label + ":\n";
-    for (size_t i = 0; i < blk.instrs.size(); ++i) {
-        result += emit_instr(blk.instrs[i]) + "\n";
+    for (const auto &instr : blk.instrs) {
+        result += emit_instr(instr) + "\n";
     }
     return result;
 }

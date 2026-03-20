@@ -373,6 +373,25 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ---
 
+## Best Practices Audit (see `bestpractices_roadmap.md`)
+
+### Phase 1: Bug Fixes + Quick Wins — DONE
+- [x] Global mutable state → local param
+- [x] Silent error → `assert(false)`
+- [x] Magic numbers → `constexpr` constants
+
+### Phase 2: Safety + Expressiveness — IN PROGRESS
+- [x] 212× unsafe `static_cast` → `expr_cast<T>()` with debug assert
+- [x] `parse_file` returns `std::optional<Program>`
+- [ ] Manual index loops → range-for
+
+### Phase 3–5: TODO
+- [ ] Namespace wrap (`namespace mc {}`)
+- [ ] DRY refactor (frame structs, leaf cases)
+- [ ] CI + structured bindings
+
+---
+
 ## Cross-Cutting Concerns (ongoing)
 
 - [ ] Error reporting with source locations

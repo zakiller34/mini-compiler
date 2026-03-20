@@ -2,6 +2,7 @@
 
 #include "type.h"
 
+#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -31,6 +32,7 @@ public:
 
 class IntExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Int;
   int64_t value;
   explicit IntExpr(int64_t v) : value(v) {}
   NodeKind kind() const override { return NodeKind::Int; }
@@ -39,6 +41,7 @@ public:
 
 class BoolExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Bool;
   bool value;
   explicit BoolExpr(bool v) : value(v) {}
   NodeKind kind() const override { return NodeKind::Bool; }
@@ -47,6 +50,7 @@ public:
 
 class VarExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Var;
   std::string name;
   explicit VarExpr(std::string n) : name(std::move(n)) {}
   NodeKind kind() const override { return NodeKind::Var; }
@@ -55,12 +59,14 @@ public:
 
 class ReadExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Read;
   NodeKind kind() const override { return NodeKind::Read; }
   std::string dump() const override;
 };
 
 class UnaryExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Unary;
   UnaryOp op;
   std::unique_ptr<Expr> operand;
   UnaryExpr(UnaryOp o, std::unique_ptr<Expr> e)
@@ -71,6 +77,7 @@ public:
 
 class BinaryExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Binary;
   BinaryOp op;
   std::unique_ptr<Expr> lhs;
   std::unique_ptr<Expr> rhs;
@@ -82,6 +89,7 @@ public:
 
 class IfExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::If;
   std::unique_ptr<Expr> cond;
   std::unique_ptr<Expr> then_branch;
   std::unique_ptr<Expr> else_branch;
@@ -95,6 +103,7 @@ public:
 
 class LetExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Let;
   std::string var;
   std::unique_ptr<Expr> init;
   std::unique_ptr<Expr> body;
@@ -106,6 +115,7 @@ public:
 
 class WhileExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::While;
   std::unique_ptr<Expr> cond;
   std::unique_ptr<Expr> body;
   WhileExpr(std::unique_ptr<Expr> c, std::unique_ptr<Expr> b)
@@ -116,6 +126,7 @@ public:
 
 class SetBangExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::SetBang;
   std::string var_name;
   std::unique_ptr<Expr> expr;
   SetBangExpr(std::string v, std::unique_ptr<Expr> e)
@@ -126,6 +137,7 @@ public:
 
 class BeginExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Begin;
   std::vector<std::unique_ptr<Expr>> exprs;
   explicit BeginExpr(std::vector<std::unique_ptr<Expr>> es)
       : exprs(std::move(es)) {}
@@ -135,6 +147,7 @@ public:
 
 class VoidExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Void;
   NodeKind kind() const override { return NodeKind::Void; }
   std::string dump() const override;
 };
@@ -142,6 +155,7 @@ public:
 /// @brief Introduced by uncover_get, never parsed
 class GetExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Get;
   std::string name;
   explicit GetExpr(std::string n) : name(std::move(n)) {}
   NodeKind kind() const override { return NodeKind::Get; }
@@ -151,6 +165,7 @@ public:
 /// @brief Tuple constructor: vector(e1, e2, ...)
 class VectorExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Vector;
   std::vector<std::unique_ptr<Expr>> elems;
   explicit VectorExpr(std::vector<std::unique_ptr<Expr>> es)
       : elems(std::move(es)) {}
@@ -161,6 +176,7 @@ public:
 /// @brief Tuple element access: vec[index]
 class VectorRefExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::VectorRef;
   std::unique_ptr<Expr> vec;
   int64_t index;
   VectorRefExpr(std::unique_ptr<Expr> v, int64_t i)
@@ -172,6 +188,7 @@ public:
 /// @brief Tuple element mutation: vec[index] = val
 class VectorSetExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::VectorSet;
   std::unique_ptr<Expr> vec;
   int64_t index;
   std::unique_ptr<Expr> val;
@@ -184,6 +201,7 @@ public:
 /// @brief Tuple length: length(vec)
 class VectorLengthExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::VectorLength;
   std::unique_ptr<Expr> vec;
   explicit VectorLengthExpr(std::unique_ptr<Expr> v) : vec(std::move(v)) {}
   NodeKind kind() const override { return NodeKind::VectorLength; }
@@ -193,6 +211,7 @@ public:
 /// @brief Introduced by expose_allocation: allocate(len, type)
 class AllocateExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Allocate;
   int64_t len;
   TypePtr type;
   AllocateExpr(int64_t l, TypePtr t) : len(l), type(std::move(t)) {}
@@ -203,6 +222,7 @@ public:
 /// @brief Introduced by expose_allocation: collect(bytes)
 class CollectExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::Collect;
   int64_t bytes;
   explicit CollectExpr(int64_t b) : bytes(b) {}
   NodeKind kind() const override { return NodeKind::Collect; }
@@ -212,11 +232,24 @@ public:
 /// @brief Introduced by expose_allocation: global_value(name)
 class GlobalValueExpr : public Expr {
 public:
+  static constexpr NodeKind expected_kind = NodeKind::GlobalValue;
   std::string name;
   explicit GlobalValueExpr(std::string n) : name(std::move(n)) {}
   NodeKind kind() const override { return NodeKind::GlobalValue; }
   std::string dump() const override;
 };
+
+template <typename T>
+const T *expr_cast(const Expr *e) {
+    assert(e && e->kind() == T::expected_kind);
+    return static_cast<const T *>(e);
+}
+
+template <typename T>
+T *expr_cast(Expr *e) {
+    assert(e && e->kind() == T::expected_kind);
+    return static_cast<T *>(e);
+}
 
 class Program {
 public:

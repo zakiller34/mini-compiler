@@ -84,31 +84,31 @@ void push_let(const LetExpr *le, std::string &out,
 void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
   switch (e->kind()) {
   case NodeKind::Int:
-    out += std::to_string(static_cast<const IntExpr *>(e)->value);
+    out += std::to_string(expr_cast<IntExpr>(e)->value);
     break;
   case NodeKind::Bool:
-    out += static_cast<const BoolExpr *>(e)->value ? "true" : "false";
+    out += expr_cast<BoolExpr>(e)->value ? "true" : "false";
     break;
   case NodeKind::Var:
-    out += static_cast<const VarExpr *>(e)->name;
+    out += expr_cast<VarExpr>(e)->name;
     break;
   case NodeKind::Read:
     out += "(read)";
     break;
   case NodeKind::Unary:
-    push_unary(static_cast<const UnaryExpr *>(e), out, tasks);
+    push_unary(expr_cast<UnaryExpr>(e), out, tasks);
     break;
   case NodeKind::Binary:
-    push_binary(static_cast<const BinaryExpr *>(e), out, tasks);
+    push_binary(expr_cast<BinaryExpr>(e), out, tasks);
     break;
   case NodeKind::If:
-    push_if(static_cast<const IfExpr *>(e), out, tasks);
+    push_if(expr_cast<IfExpr>(e), out, tasks);
     break;
   case NodeKind::Let:
-    push_let(static_cast<const LetExpr *>(e), out, tasks);
+    push_let(expr_cast<LetExpr>(e), out, tasks);
     break;
   case NodeKind::While: {
-    auto *we = static_cast<const WhileExpr *>(e);
+    auto *we = expr_cast<WhileExpr>(e);
     out += "(while ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, we->body.get(), ""});
@@ -117,14 +117,14 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     break;
   }
   case NodeKind::SetBang: {
-    auto *se = static_cast<const SetBangExpr *>(e);
+    auto *se = expr_cast<SetBangExpr>(e);
     out += "(set! " + se->var_name + " ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, se->expr.get(), ""});
     break;
   }
   case NodeKind::Begin: {
-    auto *beg = static_cast<const BeginExpr *>(e);
+    auto *beg = expr_cast<BeginExpr>(e);
     out += "(begin";
     tasks.push_back({Action::Append, nullptr, ")"});
     for (int i = static_cast<int>(beg->exprs.size()) - 1; i >= 0; --i) {
@@ -137,10 +137,10 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     out += "(void)";
     break;
   case NodeKind::Get:
-    out += "(get! " + static_cast<const GetExpr *>(e)->name + ")";
+    out += "(get! " + expr_cast<GetExpr>(e)->name + ")";
     break;
   case NodeKind::Vector: {
-    auto *ve = static_cast<const VectorExpr *>(e);
+    auto *ve = expr_cast<VectorExpr>(e);
     out += "(vector";
     tasks.push_back({Action::Append, nullptr, ")"});
     for (int i = static_cast<int>(ve->elems.size()) - 1; i >= 0; --i) {
@@ -150,7 +150,7 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     break;
   }
   case NodeKind::VectorRef: {
-    auto *vr = static_cast<const VectorRefExpr *>(e);
+    auto *vr = expr_cast<VectorRefExpr>(e);
     out += "(vector-ref ";
     tasks.push_back({Action::Append, nullptr,
         " " + std::to_string(vr->index) + ")"});
@@ -158,7 +158,7 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     break;
   }
   case NodeKind::VectorSet: {
-    auto *vs = static_cast<const VectorSetExpr *>(e);
+    auto *vs = expr_cast<VectorSetExpr>(e);
     out += "(vector-set! ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, vs->val.get(), ""});
@@ -168,25 +168,25 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     break;
   }
   case NodeKind::VectorLength: {
-    auto *vl = static_cast<const VectorLengthExpr *>(e);
+    auto *vl = expr_cast<VectorLengthExpr>(e);
     out += "(vector-length ";
     tasks.push_back({Action::Append, nullptr, ")"});
     tasks.push_back({Action::Visit, vl->vec.get(), ""});
     break;
   }
   case NodeKind::Allocate: {
-    auto *ae = static_cast<const AllocateExpr *>(e);
+    auto *ae = expr_cast<AllocateExpr>(e);
     out += "(allocate " + std::to_string(ae->len) + " " +
            ae->type->dump() + ")";
     break;
   }
   case NodeKind::Collect: {
-    auto *ce = static_cast<const CollectExpr *>(e);
+    auto *ce = expr_cast<CollectExpr>(e);
     out += "(collect " + std::to_string(ce->bytes) + ")";
     break;
   }
   case NodeKind::GlobalValue: {
-    auto *gv = static_cast<const GlobalValueExpr *>(e);
+    auto *gv = expr_cast<GlobalValueExpr>(e);
     out += "(global-value " + gv->name + ")";
     break;
   }

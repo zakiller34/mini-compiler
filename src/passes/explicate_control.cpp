@@ -19,17 +19,17 @@ std::string fresh_label(const std::string &prefix, int &label_counter) {
 cir::Atom make_atom(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::Int:
-        return cir::IntAtom{static_cast<const IntExpr *>(e)->value};
+        return cir::IntAtom{expr_cast<IntExpr>(e)->value};
     case NodeKind::Bool:
-        return cir::BoolAtom{static_cast<const BoolExpr *>(e)->value};
+        return cir::BoolAtom{expr_cast<BoolExpr>(e)->value};
     case NodeKind::Get:
-        return cir::VarAtom{static_cast<const GetExpr *>(e)->name};
+        return cir::VarAtom{expr_cast<GetExpr>(e)->name};
     case NodeKind::Void:
         return cir::IntAtom{0};
     case NodeKind::Var:
-        return cir::VarAtom{static_cast<const VarExpr *>(e)->name};
+        return cir::VarAtom{expr_cast<VarExpr>(e)->name};
     default:
-        return cir::VarAtom{static_cast<const VarExpr *>(e)->name};
+        return cir::VarAtom{expr_cast<VarExpr>(e)->name};
     }
 }
 
@@ -40,22 +40,22 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::Int:
         return cir::AtomExpr{cir::IntAtom{
-            static_cast<const IntExpr *>(e)->value}};
+            expr_cast<IntExpr>(e)->value}};
     case NodeKind::Bool:
         return cir::AtomExpr{cir::BoolAtom{
-            static_cast<const BoolExpr *>(e)->value}};
+            expr_cast<BoolExpr>(e)->value}};
     case NodeKind::Var:
         return cir::AtomExpr{cir::VarAtom{
-            static_cast<const VarExpr *>(e)->name}};
+            expr_cast<VarExpr>(e)->name}};
     case NodeKind::Get:
         return cir::AtomExpr{cir::VarAtom{
-            static_cast<const GetExpr *>(e)->name}};
+            expr_cast<GetExpr>(e)->name}};
     case NodeKind::Void:
         return cir::AtomExpr{cir::IntAtom{0}};
     case NodeKind::Read:
         return cir::CReadExpr{};
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         if (ue->op == UnaryOp::Not) {
             return cir::CNotExpr{make_atom(ue->operand.get())};
         }
@@ -63,7 +63,7 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
                                 make_atom(ue->operand.get())};
     }
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(e);
+        auto *bine = expr_cast<BinaryExpr>(e);
         if (bine->op == BinaryOp::Add || bine->op == BinaryOp::Sub) {
             auto op = (bine->op == BinaryOp::Add) ? cir::CBinaryOp::Add
                                                    : cir::CBinaryOp::Sub;
@@ -83,28 +83,28 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
                               make_atom(bine->rhs.get())};
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         return cir::CVectorRefExpr{make_atom(vr->vec.get()), vr->index};
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         return cir::CVectorSetExpr{make_atom(vs->vec.get()), vs->index,
                                     make_atom(vs->val.get())};
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         return cir::CVectorLengthExpr{make_atom(vl->vec.get())};
     }
     case NodeKind::Allocate: {
-        auto *ae = static_cast<const AllocateExpr *>(e);
+        auto *ae = expr_cast<AllocateExpr>(e);
         return cir::CAllocateExpr{ae->len, ae->type};
     }
     case NodeKind::Collect: {
-        auto *ce = static_cast<const CollectExpr *>(e);
+        auto *ce = expr_cast<CollectExpr>(e);
         return cir::CCollectExpr{ce->bytes};
     }
     case NodeKind::GlobalValue: {
-        auto *gv = static_cast<const GlobalValueExpr *>(e);
+        auto *gv = expr_cast<GlobalValueExpr>(e);
         return cir::CGlobalValueExpr{gv->name};
     }
     default:
@@ -169,7 +169,7 @@ void peel_lets(const Expr *&cur, std::vector<cir::Assign> &stmts) {
     // invariant: stmts has assignments from peeled lets
     // decreases: depth of let nesting
     while (cur->kind() == NodeKind::Let) {
-        auto *le = static_cast<const LetExpr *>(cur);
+        auto *le = expr_cast<LetExpr>(cur);
         if (is_complex_init(le->init.get())) break;
         stmts.push_back({le->var, expr_to_cexpr(le->init.get())});
         cur = le->body.get();
@@ -193,7 +193,7 @@ void emit_begin_effects(
             cur_label = next_l;
             cur_stmts = {};
         } else if (sub->kind() == NodeKind::SetBang) {
-            auto *ss = static_cast<const SetBangExpr *>(sub);
+            auto *ss = expr_cast<SetBangExpr>(sub);
             cur_stmts.push_back({ss->var_name,
                 expr_to_cexpr(ss->expr.get())});
         } else {
@@ -215,7 +215,7 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
 
     switch (cur->kind()) {
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(cur);
+        auto *ife = expr_cast<IfExpr>(cur);
         std::string then_l = fresh_label("then", lc);
         std::string else_l = fresh_label("else", lc);
         wl.push_back(TailWork{then_l, {}, ife->then_branch.get()});
@@ -225,7 +225,7 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(cur);
+        auto *le = expr_cast<LetExpr>(cur);
         std::string cont_l = fresh_label("cont", lc);
         wl.push_back(TailWork{cont_l, {}, le->body.get()});
         wl.push_back(AssignWork{tw.block_label, std::move(stmts),
@@ -233,7 +233,7 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(cur);
+        auto *we = expr_cast<WhileExpr>(cur);
         std::string le = fresh_label("loop_entry", lc);
         std::string lb = fresh_label("loop_body", lc);
         std::string lx = fresh_label("loop_exit", lc);
@@ -244,14 +244,14 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(cur);
+        auto *se = expr_cast<SetBangExpr>(cur);
         stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
         blocks[tw.block_label] = {std::move(stmts),
             cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(cur);
+        auto *beg = expr_cast<BeginExpr>(cur);
         if (beg->exprs.empty()) {
             blocks[tw.block_label] = {std::move(stmts),
                 cir::Return{cir::AtomExpr{cir::IntAtom{0}}}};
@@ -287,7 +287,7 @@ bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
     peel_lets(cond, pw.stmts);
     switch (cond->kind()) {
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(cond);
+        auto *bine = expr_cast<BinaryExpr>(cond);
         if (bine->op == BinaryOp::Eq || bine->op == BinaryOp::Lt ||
             bine->op == BinaryOp::Le || bine->op == BinaryOp::Gt ||
             bine->op == BinaryOp::Ge) {
@@ -301,7 +301,7 @@ bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(cond);
+        auto *ue = expr_cast<UnaryExpr>(cond);
         if (ue->op == UnaryOp::Not) {
             wl.push_back(PredWork{ue->operand.get(),
                                    pw.else_label, pw.then_label,
@@ -311,13 +311,13 @@ bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::Bool: {
-        auto *be = static_cast<const BoolExpr *>(cond);
+        auto *be = expr_cast<BoolExpr>(cond);
         blocks[pw.block_label] = {std::move(pw.stmts),
             cir::Goto{be->value ? pw.then_label : pw.else_label}};
         return true;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(cond);
+        auto *ife = expr_cast<IfExpr>(cond);
         std::string it = fresh_label("pthen", lc);
         std::string ie = fresh_label("pelse", lc);
         wl.push_back(PredWork{ife->then_branch.get(),
@@ -347,7 +347,7 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
     const Expr *e = aw.expr;
     switch (e->kind()) {
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         std::string tl = fresh_label("athen", lc);
         std::string el = fresh_label("aelse", lc);
         wl.push_back(AssignWork{tl, {}, ife->then_branch.get(),
@@ -359,7 +359,7 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         std::string le = fresh_label("loop_entry", lc);
         std::string lb = fresh_label("loop_body", lc);
         std::string lx = fresh_label("loop_exit", lc);
@@ -371,7 +371,7 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         auto cs = std::move(aw.stmts);
         std::string cl = aw.block_label;
         emit_begin_effects(beg->exprs, beg->exprs.size() > 0
@@ -391,7 +391,7 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         auto stmts = std::move(aw.stmts);
         stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
         stmts.push_back({aw.var, cir::AtomExpr{cir::IntAtom{0}}});
@@ -400,13 +400,13 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         auto stmts_copy = std::move(aw.stmts);
         // Peel simple lets first
         const Expr *cur_e = e;
         peel_lets(cur_e, stmts_copy);
         if (cur_e->kind() == NodeKind::Let) {
-            auto *inner_le = static_cast<const LetExpr *>(cur_e);
+            auto *inner_le = expr_cast<LetExpr>(cur_e);
             std::string cont_l = fresh_label("cont", lc);
             wl.push_back(AssignWork{cont_l, {}, inner_le->body.get(),
                                      aw.var, aw.cont_label});
@@ -444,14 +444,14 @@ void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
 
     switch (e->kind()) {
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
         blocks[ew.block_label] = {std::move(stmts),
                                    cir::Goto{ew.cont_label}};
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         std::string cl = ew.block_label;
         auto cs = std::move(stmts);
         emit_begin_effects(beg->exprs, beg->exprs.size(), cl, cs, wl, lc);
@@ -459,7 +459,7 @@ void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         std::string le = fresh_label("loop_entry", lc);
         std::string lb = fresh_label("loop_body", lc);
         std::string lx = fresh_label("loop_exit", lc);
@@ -470,7 +470,7 @@ void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         std::string tl = fresh_label("ethen", lc);
         std::string el = fresh_label("eelse", lc);
         wl.push_back(EffectWork{tl, {}, ife->then_branch.get(),

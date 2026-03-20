@@ -1,17 +1,21 @@
 #include "expose_allocation.h"
 
 #include <algorithm>
+#include <cassert>
 #include <string>
 #include <variant>
 #include <vector>
 
 namespace {
 
-int tmp_counter = 0;
+/// @brief Word size in bytes for heap object layout
+constexpr int64_t kWordSize = 8;
 
 /// @brief Generate a fresh temporary name
-std::string fresh_tmp() {
-    return "alloc." + std::to_string(tmp_counter++);
+/// @requires counter >= 0
+/// @ensures result is "alloc.N" with N = old counter; counter incremented
+std::string fresh_tmp(int &counter) {
+    return "alloc." + std::to_string(counter++);
 }
 
 struct EvalFrame { const Expr *expr; };
@@ -47,18 +51,17 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
 TypePtr infer_vector_type(const std::vector<std::unique_ptr<Expr>> &elems) {
     std::vector<TypePtr> ts;
     // invariant: ts has inferred types for elems[0..i)
-    for (size_t i = 0; i < elems.size(); ++i) {
-        const Expr *e = elems[i].get();
+    for (const auto &elem : elems) {
+        const Expr *e = elem.get();
         switch (e->kind()) {
         case NodeKind::Int: ts.push_back(int_type()); break;
         case NodeKind::Bool: ts.push_back(bool_type()); break;
         case NodeKind::Void: ts.push_back(void_type()); break;
         case NodeKind::Allocate:
-            ts.push_back(static_cast<const AllocateExpr *>(e)->type);
+            ts.push_back(expr_cast<AllocateExpr>(e)->type);
             break;
         default:
-            // For vars and other exprs, we use Int as default
-            // (type checker has validated; actual type threading is more complex)
+            assert(false && "infer_vector_type: unexpected expr kind in vector element");
             ts.push_back(int_type());
             break;
         }
@@ -73,15 +76,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back(std::make_unique<IntExpr>(
-            static_cast<const IntExpr *>(e)->value));
+            expr_cast<IntExpr>(e)->value));
         break;
     case NodeKind::Bool:
         results.push_back(std::make_unique<BoolExpr>(
-            static_cast<const BoolExpr *>(e)->value));
+            expr_cast<BoolExpr>(e)->value));
         break;
     case NodeKind::Var:
         results.push_back(std::make_unique<VarExpr>(
-            static_cast<const VarExpr *>(e)->name));
+            expr_cast<VarExpr>(e)->name));
         break;
     case NodeKind::Read:
         results.push_back(std::make_unique<ReadExpr>());
@@ -91,47 +94,47 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     case NodeKind::Get:
         results.push_back(std::make_unique<GetExpr>(
-            static_cast<const GetExpr *>(e)->name));
+            expr_cast<GetExpr>(e)->name));
         break;
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
         break;
     }
     case NodeKind::Binary: {
-        auto *be = static_cast<const BinaryExpr *>(e);
+        auto *be = expr_cast<BinaryExpr>(e);
         stack.push_back(BinBuildLhs{be->op, be->rhs.get()});
         stack.push_back(EvalFrame{be->lhs.get()});
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get()});
         stack.push_back(EvalFrame{ife->cond.get()});
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get()});
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         stack.push_back(WhileBuildCond{we->body.get()});
         stack.push_back(EvalFrame{we->cond.get()});
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         stack.push_back(SetBangBuild{se->var_name});
         stack.push_back(EvalFrame{se->expr.get()});
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         if (beg->exprs.empty()) {
             results.push_back(std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -147,7 +150,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Vector: {
-        auto *ve = static_cast<const VectorExpr *>(e);
+        auto *ve = expr_cast<VectorExpr>(e);
         // Push all elements for evaluation, then VectorBuild
         // We need a type but don't have it until we know element types
         // Use a placeholder; type is inferred after elements are built
@@ -159,41 +162,42 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         stack.push_back(VectorRefBuild{vr->index});
         stack.push_back(EvalFrame{vr->vec.get()});
         break;
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         stack.push_back(VectorSetVecBuild{vs->index, vs->val.get()});
         stack.push_back(EvalFrame{vs->vec.get()});
         break;
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthBuild{});
         stack.push_back(EvalFrame{vl->vec.get()});
         break;
     }
     case NodeKind::Allocate:
         results.push_back(std::make_unique<AllocateExpr>(
-            static_cast<const AllocateExpr *>(e)->len,
-            static_cast<const AllocateExpr *>(e)->type));
+            expr_cast<AllocateExpr>(e)->len,
+            expr_cast<AllocateExpr>(e)->type));
         break;
     case NodeKind::Collect:
         results.push_back(std::make_unique<CollectExpr>(
-            static_cast<const CollectExpr *>(e)->bytes));
+            expr_cast<CollectExpr>(e)->bytes));
         break;
     case NodeKind::GlobalValue:
         results.push_back(std::make_unique<GlobalValueExpr>(
-            static_cast<const GlobalValueExpr *>(e)->name));
+            expr_cast<GlobalValueExpr>(e)->name));
         break;
     }
 }
 
 void process_cont(Frame &frame, std::vector<Frame> &stack,
-                  std::vector<std::unique_ptr<Expr>> &results) {
+                  std::vector<std::unique_ptr<Expr>> &results,
+                  int &tmp_counter) {
     if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<UnaryExpr>(
@@ -266,7 +270,7 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         // Infer vector type from element expressions
         TypePtr vtype = infer_vector_type(elem_exprs);
         int64_t n = static_cast<int64_t>(vb->total);
-        int64_t bytes = 8 * (n + 1); // tag + n elements
+        int64_t bytes = kWordSize * (n + 1); // tag + n elements
 
         // Build: let t0=e0 in ... let tn=en in
         //   begin { if (+ free_ptr bytes) < fromspace_end then void
@@ -278,7 +282,7 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         // Generate temp names for each element
         std::vector<std::string> tmp_names;
         for (size_t i = 0; i < elem_exprs.size(); ++i) {
-            tmp_names.push_back(fresh_tmp());
+            tmp_names.push_back(fresh_tmp(tmp_counter));
         }
 
         // Build the begin body
@@ -299,7 +303,7 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         begin_body.push_back(std::move(gc_check));
 
         // let v = allocate(n, type)
-        std::string v_name = fresh_tmp();
+        std::string v_name = fresh_tmp(tmp_counter);
 
         // vector-set!(v, i, ti) for each element
         for (size_t i = 0; i < tmp_names.size(); ++i) {
@@ -346,7 +350,7 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 } // namespace
 
 std::unique_ptr<Program> expose_allocation(const Program &prog) {
-    tmp_counter = 0;
+    int tmp_counter = 0;
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
     stack.push_back(EvalFrame{prog.body.get()});
@@ -358,7 +362,7 @@ std::unique_ptr<Program> expose_allocation(const Program &prog) {
         if (auto *ef = std::get_if<EvalFrame>(&frame)) {
             push_eval(*ef, stack, results);
         } else {
-            process_cont(frame, stack, results);
+            process_cont(frame, stack, results, tmp_counter);
         }
     }
     return std::make_unique<Program>(std::move(results.back()));

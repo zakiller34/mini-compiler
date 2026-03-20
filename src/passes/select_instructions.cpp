@@ -4,6 +4,9 @@
 
 namespace {
 
+/// @brief Word size in bytes for heap object layout
+constexpr int64_t kWordSize = 8;
+
 x86::Arg atom_to_arg(const cir::Atom &a) {
     if (const auto *i = std::get_if<cir::IntAtom>(&a)) {
         return x86::Imm{i->value};
@@ -60,7 +63,7 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         x86::Arg r11 = x86::RegArg{x86::Reg::R11};
         x86::Arg fp = x86::GlobalArg{"free_ptr"};
         int64_t n = ae->len;
-        int64_t bytes = 8 * (n + 1);
+        int64_t bytes = kWordSize * (n + 1);
         // Compute GC tag: bit0=0, bits1-6=length, bits7+=pointer mask
         int64_t tag = (n & 0x3F) << 1; // length in bits 1-6
         // Set pointer mask bits 7+ for vector-typed elements
@@ -79,13 +82,13 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         x86::Arg r11 = x86::RegArg{x86::Reg::R11};
         instrs.push_back(x86::Movq{atom_to_arg(vr->vec), r11});
         instrs.push_back(x86::Movq{
-            x86::Deref{x86::Reg::R11, 8 * (vr->index + 1)}, dst});
+            x86::Deref{x86::Reg::R11, kWordSize * (vr->index + 1)}, dst});
     } else if (const auto *vs = std::get_if<cir::CVectorSetExpr>(&expr)) {
         // movq vec -> r11, movq val -> 8*(i+1)(%r11)
         x86::Arg r11 = x86::RegArg{x86::Reg::R11};
         instrs.push_back(x86::Movq{atom_to_arg(vs->vec), r11});
         instrs.push_back(x86::Movq{atom_to_arg(vs->val),
-            x86::Deref{x86::Reg::R11, 8 * (vs->index + 1)}});
+            x86::Deref{x86::Reg::R11, kWordSize * (vs->index + 1)}});
         // vector-set! returns void, store 0 in dst
         instrs.push_back(x86::Movq{x86::Imm{0}, dst});
     } else if (const auto *vl = std::get_if<cir::CVectorLengthExpr>(&expr)) {
@@ -126,9 +129,9 @@ void emit_tail(const cir::Tail &tail, std::vector<x86::Instr> &instrs) {
 
 x86::Block select_block(const cir::BasicBlock &blk) {
     std::vector<x86::Instr> instrs;
-    for (size_t i = 0; i < blk.stmts.size(); ++i) {
-        x86::Arg dst = x86::VarArg{blk.stmts[i].var};
-        emit_cexpr(blk.stmts[i].expr, dst, instrs);
+    for (const auto &stmt : blk.stmts) {
+        x86::Arg dst = x86::VarArg{stmt.var};
+        emit_cexpr(stmt.expr, dst, instrs);
     }
     emit_tail(blk.tail, instrs);
     return x86::Block{std::move(instrs)};
@@ -158,8 +161,8 @@ x86::X86Program select_instructions(const cir::CProgram &prog) {
     if (has_gc_ops(prog)) {
         result.root_stack_space = 8; // at least one slot
     }
-    for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
-        result.blocks[it->first] = select_block(it->second);
+    for (const auto &[label, blk] : prog.blocks) {
+        result.blocks[label] = select_block(blk);
     }
     return result;
 }

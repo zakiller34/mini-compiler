@@ -19,20 +19,22 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 
 /// @brief Open and parse .mc file into AST
 /// @requires filename is a readable .mc file path
-/// @ensures result != nullptr on success, nullptr on file error
-std::unique_ptr<Program> parse_file(const std::string &filename) {
+/// @ensures result has value on success, nullopt on file error
+std::optional<Program> parse_file(const std::string &filename) {
     std::ifstream ifs(filename);
     if (!ifs) {
         std::cerr << "error: cannot open " << filename << "\n";
-        return nullptr;
+        return std::nullopt;
     }
     Lexer lex(ifs);
     Parser parser(lex);
-    return parser.parse_program();
+    auto p = parser.parse_program();
+    return Program{std::move(p->body)};
 }
 
 /// @brief Full compilation pipeline: parse -> type check -> passes -> emit x86
@@ -40,7 +42,7 @@ std::unique_ptr<Program> parse_file(const std::string &filename) {
 /// @ensures out_file contains AT&T x86-64 assembly on success (returns 0)
 int compile(const std::string &src_file, const std::string &out_file) {
     auto prog = parse_file(src_file);
-    if (prog == nullptr) return 1;
+    if (!prog) return 1;
 
     try { type_check(*prog); }
     catch (const TypeError &e) {
@@ -75,7 +77,7 @@ int compile(const std::string &src_file, const std::string &out_file) {
 int run_interpret(const std::string &src_file,
                   const std::string &input_file) {
     auto prog = parse_file(src_file);
-    if (prog == nullptr) return 1;
+    if (!prog) return 1;
 
     try { type_check(*prog); }
     catch (const TypeError &e) {

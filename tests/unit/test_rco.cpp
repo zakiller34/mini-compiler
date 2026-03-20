@@ -29,21 +29,21 @@ static bool check_all_atomic(const Expr *root) {
 
     switch (e->kind()) {
     case NodeKind::Unary: {
-      const auto *ue = static_cast<const UnaryExpr *>(e);
+      const auto *ue = expr_cast<UnaryExpr>(e);
       if (!is_atomic(ue->operand.get())) {
         return false;
       }
       break;
     }
     case NodeKind::Binary: {
-      const auto *be = static_cast<const BinaryExpr *>(e);
+      const auto *be = expr_cast<BinaryExpr>(e);
       if (!is_atomic(be->lhs.get()) || !is_atomic(be->rhs.get())) {
         return false;
       }
       break;
     }
     case NodeKind::Let: {
-      const auto *le = static_cast<const LetExpr *>(e);
+      const auto *le = expr_cast<LetExpr>(e);
       stack.push_back(le->body.get());
       stack.push_back(le->init.get());
       break;

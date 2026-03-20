@@ -11,6 +11,12 @@
 
 namespace {
 
+/// @brief Word size in bytes for stack slot layout
+constexpr int64_t kWordSize = 8;
+
+/// @brief Required stack alignment in bytes (System V AMD64 ABI)
+constexpr int64_t kAlignment = 16;
+
 x86::Arg replace_arg(const x86::Arg &a,
                      const std::map<std::string, x86::Arg> &homes) {
     if (const auto *v = std::get_if<x86::VarArg>(&a)) {
@@ -117,8 +123,8 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
     // Collect all vars
     std::set<std::string> all_vars;
     for (const auto &[label, blk] : prog.blocks) {
-        for (size_t j = 0; j < blk.instrs.size(); ++j) {
-            collect_vars_instr(blk.instrs[j], all_vars);
+        for (const auto &instr : blk.instrs) {
+            collect_vars_instr(instr, all_vars);
         }
     }
 
@@ -140,12 +146,12 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
                 if (vt != prog.var_types.end() &&
                     is_vector_type(vt->second)) {
                     homes[*name] = x86::Deref{x86::Reg::R15,
-                                               8 * root_spill_count};
+                                               kWordSize * root_spill_count};
                     ++root_spill_count;
                 } else {
                     ++spill_count;
                     homes[*name] = x86::Deref{x86::Reg::Rbp,
-                                               -8 * spill_count};
+                                               -kWordSize * spill_count};
                 }
             }
         }
@@ -157,25 +163,25 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
         }
     }
 
-    int64_t stack_space = spill_count * 8;
+    int64_t stack_space = spill_count * kWordSize;
     auto total_pushes = 1 + static_cast<int64_t>(used_callee.size());
     if (total_pushes % 2 == 0) {
-        if (stack_space % 16 != 8) stack_space += 8;
+        if (stack_space % kAlignment != kWordSize) stack_space += kWordSize;
     } else {
-        if (stack_space % 16 != 0) stack_space += 8;
+        if (stack_space % kAlignment != 0) stack_space += kWordSize;
     }
 
     x86::X86Program result;
     result.stack_space = stack_space;
-    int64_t rss = root_spill_count * 8;
+    int64_t rss = root_spill_count * kWordSize;
     result.root_stack_space = (rss > prog.root_stack_space) ? rss : prog.root_stack_space;
     result.used_callee_saved = used_callee;
     result.var_types = prog.var_types;
 
     for (const auto &[label, blk] : prog.blocks) {
         x86::Block out_blk;
-        for (size_t j = 0; j < blk.instrs.size(); ++j) {
-            out_blk.instrs.push_back(replace_instr(blk.instrs[j], homes));
+        for (const auto &instr : blk.instrs) {
+            out_blk.instrs.push_back(replace_instr(instr, homes));
         }
         result.blocks[label] = std::move(out_blk);
     }

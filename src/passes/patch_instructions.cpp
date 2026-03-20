@@ -97,12 +97,12 @@ x86::X86Program patch_instructions(const x86::X86Program &prog) {
     result.used_callee_saved = prog.used_callee_saved;
     result.var_types = prog.var_types;
 
-    for (auto it = prog.blocks.begin(); it != prog.blocks.end(); ++it) {
+    for (const auto &[label, blk] : prog.blocks) {
         std::vector<x86::Instr> patched;
-        for (size_t j = 0; j < it->second.instrs.size(); ++j) {
-            patch_one(it->second.instrs[j], patched);
+        for (const auto &instr : blk.instrs) {
+            patch_one(instr, patched);
         }
-        result.blocks[it->first] = x86::Block{std::move(patched)};
+        result.blocks[label] = x86::Block{std::move(patched)};
     }
     return result;
 }

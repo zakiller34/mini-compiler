@@ -44,27 +44,27 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back(std::make_unique<IntExpr>(
-            static_cast<const IntExpr *>(e)->value));
+            expr_cast<IntExpr>(e)->value));
         break;
     case NodeKind::Bool:
         results.push_back(std::make_unique<BoolExpr>(
-            static_cast<const BoolExpr *>(e)->value));
+            expr_cast<BoolExpr>(e)->value));
         break;
     case NodeKind::Var:
         results.push_back(std::make_unique<VarExpr>(
-            static_cast<const VarExpr *>(e)->name));
+            expr_cast<VarExpr>(e)->name));
         break;
     case NodeKind::Read:
         results.push_back(std::make_unique<ReadExpr>());
         break;
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
         break;
     }
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(e);
+        auto *bine = expr_cast<BinaryExpr>(e);
         if (bine->op == BinaryOp::And || bine->op == BinaryOp::Or) {
             if (bine->op == BinaryOp::And) {
                 stack.push_back(IfBuildCond{bine->rhs.get(), nullptr});
@@ -80,32 +80,32 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get()});
         stack.push_back(EvalFrame{ife->cond.get()});
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get()});
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         stack.push_back(WhileBuildCond{we->body.get()});
         stack.push_back(EvalFrame{we->cond.get()});
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         stack.push_back(SetBangBuild{se->var_name});
         stack.push_back(EvalFrame{se->expr.get()});
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         if (beg->exprs.empty()) {
             results.push_back(std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -125,10 +125,10 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     case NodeKind::Get:
         results.push_back(std::make_unique<GetExpr>(
-            static_cast<const GetExpr *>(e)->name));
+            expr_cast<GetExpr>(e)->name));
         break;
     case NodeKind::Vector: {
-        auto *ve = static_cast<const VectorExpr *>(e);
+        auto *ve = expr_cast<VectorExpr>(e);
         if (ve->elems.empty()) {
             results.push_back(std::make_unique<VectorExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -144,19 +144,19 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         stack.push_back(VectorRefBuild{vr->index});
         stack.push_back(EvalFrame{vr->vec.get()});
         break;
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         stack.push_back(VectorSetVecBuild{vs->index, vs->val.get()});
         stack.push_back(EvalFrame{vs->vec.get()});
         break;
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthBuild{});
         stack.push_back(EvalFrame{vl->vec.get()});
         break;

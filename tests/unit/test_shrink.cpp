@@ -17,7 +17,7 @@ static bool no_and_or(const Expr &expr) {
     stack.pop_back();
     switch (e->kind()) {
     case NodeKind::Binary: {
-      const auto *bin = static_cast<const BinaryExpr *>(e);
+      const auto *bin = expr_cast<BinaryExpr>(e);
       if (bin->op == BinaryOp::And || bin->op == BinaryOp::Or) {
         return false;
       }
@@ -26,19 +26,19 @@ static bool no_and_or(const Expr &expr) {
       break;
     }
     case NodeKind::Unary: {
-      const auto *un = static_cast<const UnaryExpr *>(e);
+      const auto *un = expr_cast<UnaryExpr>(e);
       stack.push_back(un->operand.get());
       break;
     }
     case NodeKind::If: {
-      const auto *ife = static_cast<const IfExpr *>(e);
+      const auto *ife = expr_cast<IfExpr>(e);
       stack.push_back(ife->cond.get());
       stack.push_back(ife->then_branch.get());
       stack.push_back(ife->else_branch.get());
       break;
     }
     case NodeKind::Let: {
-      const auto *le = static_cast<const LetExpr *>(e);
+      const auto *le = expr_cast<LetExpr>(e);
       stack.push_back(le->init.get());
       stack.push_back(le->body.get());
       break;
@@ -62,25 +62,25 @@ static int count_if(const Expr &expr) {
     switch (e->kind()) {
     case NodeKind::If: {
       ++count;
-      const auto *ife = static_cast<const IfExpr *>(e);
+      const auto *ife = expr_cast<IfExpr>(e);
       stack.push_back(ife->cond.get());
       stack.push_back(ife->then_branch.get());
       stack.push_back(ife->else_branch.get());
       break;
     }
     case NodeKind::Binary: {
-      const auto *bin = static_cast<const BinaryExpr *>(e);
+      const auto *bin = expr_cast<BinaryExpr>(e);
       stack.push_back(bin->lhs.get());
       stack.push_back(bin->rhs.get());
       break;
     }
     case NodeKind::Unary: {
-      const auto *un = static_cast<const UnaryExpr *>(e);
+      const auto *un = expr_cast<UnaryExpr>(e);
       stack.push_back(un->operand.get());
       break;
     }
     case NodeKind::Let: {
-      const auto *le = static_cast<const LetExpr *>(e);
+      const auto *le = expr_cast<LetExpr>(e);
       stack.push_back(le->init.get());
       stack.push_back(le->body.get());
       break;
@@ -146,7 +146,7 @@ TEST(Shrink, NonLogicPassesThrough) {
   EXPECT_EQ(count_if(*result->body), 0);
   // Still a BinaryExpr with Add
   ASSERT_EQ(result->body->kind(), NodeKind::Binary);
-  const auto *bin = static_cast<const BinaryExpr *>(result->body.get());
+  const auto *bin = expr_cast<BinaryExpr>(result->body.get());
   EXPECT_EQ(bin->op, BinaryOp::Add);
 }
 
@@ -165,7 +165,7 @@ TEST(Shrink, IntLiteralUnchanged) {
   Program prog(std::make_unique<IntExpr>(42));
   auto result = shrink(prog);
   ASSERT_EQ(result->body->kind(), NodeKind::Int);
-  const auto *i = static_cast<const IntExpr *>(result->body.get());
+  const auto *i = expr_cast<IntExpr>(result->body.get());
   EXPECT_EQ(i->value, 42);
 }
 

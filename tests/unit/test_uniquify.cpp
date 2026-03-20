@@ -24,19 +24,19 @@ static std::vector<std::string> collect_let_vars(const Expr *root) {
 
     switch (e->kind()) {
     case NodeKind::Let: {
-      const auto *le = static_cast<const LetExpr *>(e);
+      const auto *le = expr_cast<LetExpr>(e);
       names.push_back(le->var);
       stack.push_back(le->body.get());
       stack.push_back(le->init.get());
       break;
     }
     case NodeKind::Unary: {
-      const auto *ue = static_cast<const UnaryExpr *>(e);
+      const auto *ue = expr_cast<UnaryExpr>(e);
       stack.push_back(ue->operand.get());
       break;
     }
     case NodeKind::Binary: {
-      const auto *be = static_cast<const BinaryExpr *>(e);
+      const auto *be = expr_cast<BinaryExpr>(e);
       stack.push_back(be->rhs.get());
       stack.push_back(be->lhs.get());
       break;
@@ -139,7 +139,7 @@ TEST(Uniquify, WhilePreserved) {
   auto result = uniquify(prog);
   // Result should be Let with While body
   ASSERT_EQ(result->body->kind(), NodeKind::Let);
-  auto *le = static_cast<LetExpr *>(result->body.get());
+  auto *le = expr_cast<LetExpr>(result->body.get());
   ASSERT_EQ(le->body->kind(), NodeKind::While);
   // let-bound var should be uniquified (has a dot suffix)
   EXPECT_NE(le->var.find('.'), std::string::npos);

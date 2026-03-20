@@ -14,7 +14,7 @@ TEST(UncoverGet, NoSetBangNoChange) {
     auto result = uncover_get(prog);
     // Body should be LetExpr with VarExpr in body
     ASSERT_EQ(result->body->kind(), NodeKind::Let);
-    auto *le = static_cast<LetExpr *>(result->body.get());
+    auto *le = expr_cast<LetExpr>(result->body.get());
     EXPECT_EQ(le->body->kind(), NodeKind::Var);
 }
 
@@ -32,13 +32,13 @@ TEST(UncoverGet, SetBangConvertsToGet) {
     auto result = uncover_get(prog);
 
     ASSERT_EQ(result->body->kind(), NodeKind::Let);
-    auto *le = static_cast<LetExpr *>(result->body.get());
+    auto *le = expr_cast<LetExpr>(result->body.get());
     ASSERT_EQ(le->body->kind(), NodeKind::Begin);
-    auto *beg = static_cast<BeginExpr *>(le->body.get());
+    auto *beg = expr_cast<BeginExpr>(le->body.get());
     ASSERT_EQ(beg->exprs.size(), 2U);
     // Second expr should be GetExpr, not VarExpr
     ASSERT_EQ(beg->exprs[1]->kind(), NodeKind::Get);
-    auto *ge = static_cast<GetExpr *>(beg->exprs[1].get());
+    auto *ge = expr_cast<GetExpr>(beg->exprs[1].get());
     EXPECT_EQ(ge->name, "x");
 }
 
@@ -59,11 +59,11 @@ TEST(UncoverGet, NonMutableVarUnchanged) {
 
     // Navigate to the begin's second expr
     ASSERT_EQ(result->body->kind(), NodeKind::Let);
-    auto *outer = static_cast<LetExpr *>(result->body.get());
+    auto *outer = expr_cast<LetExpr>(result->body.get());
     ASSERT_EQ(outer->body->kind(), NodeKind::Let);
-    auto *inner = static_cast<LetExpr *>(outer->body.get());
+    auto *inner = expr_cast<LetExpr>(outer->body.get());
     ASSERT_EQ(inner->body->kind(), NodeKind::Begin);
-    auto *beg = static_cast<BeginExpr *>(inner->body.get());
+    auto *beg = expr_cast<BeginExpr>(inner->body.get());
     // y should still be VarExpr
     EXPECT_EQ(beg->exprs[1]->kind(), NodeKind::Var);
 }
@@ -89,11 +89,11 @@ TEST(UncoverGet, WhileBodyConverted) {
 
     // Navigate to while condition
     ASSERT_EQ(result->body->kind(), NodeKind::Let);
-    auto *le = static_cast<LetExpr *>(result->body.get());
+    auto *le = expr_cast<LetExpr>(result->body.get());
     ASSERT_EQ(le->body->kind(), NodeKind::While);
-    auto *we = static_cast<WhileExpr *>(le->body.get());
+    auto *we = expr_cast<WhileExpr>(le->body.get());
     ASSERT_EQ(we->cond->kind(), NodeKind::Binary);
-    auto *cmp = static_cast<BinaryExpr *>(we->cond.get());
+    auto *cmp = expr_cast<BinaryExpr>(we->cond.get());
     // lhs of comparison should be GetExpr("i")
     EXPECT_EQ(cmp->lhs->kind(), NodeKind::Get);
 }

@@ -97,7 +97,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         types.push_back(bool_type());
         break;
     case NodeKind::Var: {
-        auto *ve = static_cast<const VarExpr *>(e);
+        auto *ve = expr_cast<VarExpr>(e);
         auto it = env.find(ve->name);
         if (it == env.end()) {
             throw TypeError("unbound variable: " + ve->name);
@@ -109,38 +109,38 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         types.push_back(int_type());
         break;
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryFrame{ue->op});
         stack.push_back(EvalFrame{ue->operand.get(), env});
         break;
     }
     case NodeKind::Binary: {
-        auto *be = static_cast<const BinaryExpr *>(e);
+        auto *be = expr_cast<BinaryExpr>(e);
         stack.push_back(BinLhsFrame{be->op, be->rhs.get(), env});
         stack.push_back(EvalFrame{be->lhs.get(), env});
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         stack.push_back(IfCondFrame{ife->then_branch.get(),
                                      ife->else_branch.get(), env});
         stack.push_back(EvalFrame{ife->cond.get(), env});
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         stack.push_back(LetBindFrame{le->var, le->body.get(), env});
         stack.push_back(EvalFrame{le->init.get(), env});
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         stack.push_back(WhileCondFrame{we->body.get(), env});
         stack.push_back(EvalFrame{we->cond.get(), env});
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         auto it = env.find(se->var_name);
         if (it == env.end()) {
             throw TypeError("unbound variable in set!: " + se->var_name);
@@ -150,7 +150,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         if (beg->exprs.empty()) {
             types.push_back(void_type());
         } else {
@@ -167,7 +167,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         types.push_back(void_type());
         break;
     case NodeKind::Get: {
-        auto *ge = static_cast<const GetExpr *>(e);
+        auto *ge = expr_cast<GetExpr>(e);
         auto it = env.find(ge->name);
         if (it == env.end()) {
             throw TypeError("unbound variable: " + ge->name);
@@ -176,7 +176,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::Vector: {
-        auto *ve = static_cast<const VectorExpr *>(e);
+        auto *ve = expr_cast<VectorExpr>(e);
         if (ve->elems.empty()) {
             throw TypeError("empty vectors not supported");
         }
@@ -190,25 +190,25 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         break;
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         stack.push_back(VectorRefFrame{vr->index});
         stack.push_back(EvalFrame{vr->vec.get(), env});
         break;
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         stack.push_back(VectorSetVecFrame{vs->index, vs->val.get(), env});
         stack.push_back(EvalFrame{vs->vec.get(), env});
         break;
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthFrame{});
         stack.push_back(EvalFrame{vl->vec.get(), env});
         break;
     }
     case NodeKind::Allocate: {
-        auto *ae = static_cast<const AllocateExpr *>(e);
+        auto *ae = expr_cast<AllocateExpr>(e);
         types.push_back(ae->type);
         break;
     }

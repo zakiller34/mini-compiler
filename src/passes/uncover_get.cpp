@@ -24,49 +24,49 @@ std::set<std::string> collect_mutable_vars(const Expr *root) {
 
         switch (e->kind()) {
         case NodeKind::SetBang: {
-            auto *se = static_cast<const SetBangExpr *>(e);
+            auto *se = expr_cast<SetBangExpr>(e);
             result.insert(se->var_name);
             worklist.push_back(se->expr.get());
             break;
         }
         case NodeKind::Unary:
             worklist.push_back(
-                static_cast<const UnaryExpr *>(e)->operand.get());
+                expr_cast<UnaryExpr>(e)->operand.get());
             break;
         case NodeKind::Binary: {
-            auto *be = static_cast<const BinaryExpr *>(e);
+            auto *be = expr_cast<BinaryExpr>(e);
             worklist.push_back(be->lhs.get());
             worklist.push_back(be->rhs.get());
             break;
         }
         case NodeKind::If: {
-            auto *ife = static_cast<const IfExpr *>(e);
+            auto *ife = expr_cast<IfExpr>(e);
             worklist.push_back(ife->cond.get());
             worklist.push_back(ife->then_branch.get());
             worklist.push_back(ife->else_branch.get());
             break;
         }
         case NodeKind::Let: {
-            auto *le = static_cast<const LetExpr *>(e);
+            auto *le = expr_cast<LetExpr>(e);
             worklist.push_back(le->init.get());
             worklist.push_back(le->body.get());
             break;
         }
         case NodeKind::While: {
-            auto *we = static_cast<const WhileExpr *>(e);
+            auto *we = expr_cast<WhileExpr>(e);
             worklist.push_back(we->cond.get());
             worklist.push_back(we->body.get());
             break;
         }
         case NodeKind::Begin: {
-            auto *beg = static_cast<const BeginExpr *>(e);
+            auto *beg = expr_cast<BeginExpr>(e);
             for (const auto &sub : beg->exprs) {
                 worklist.push_back(sub.get());
             }
             break;
         }
         case NodeKind::Vector: {
-            auto *ve = static_cast<const VectorExpr *>(e);
+            auto *ve = expr_cast<VectorExpr>(e);
             for (const auto &el : ve->elems) {
                 worklist.push_back(el.get());
             }
@@ -74,17 +74,17 @@ std::set<std::string> collect_mutable_vars(const Expr *root) {
         }
         case NodeKind::VectorRef:
             worklist.push_back(
-                static_cast<const VectorRefExpr *>(e)->vec.get());
+                expr_cast<VectorRefExpr>(e)->vec.get());
             break;
         case NodeKind::VectorSet: {
-            auto *vs = static_cast<const VectorSetExpr *>(e);
+            auto *vs = expr_cast<VectorSetExpr>(e);
             worklist.push_back(vs->vec.get());
             worklist.push_back(vs->val.get());
             break;
         }
         case NodeKind::VectorLength:
             worklist.push_back(
-                static_cast<const VectorLengthExpr *>(e)->vec.get());
+                expr_cast<VectorLengthExpr>(e)->vec.get());
             break;
         default:
             break; // Int, Bool, Var, Read, Void, Get, Allocate, etc.: no children
@@ -133,14 +133,14 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back(std::make_unique<IntExpr>(
-            static_cast<const IntExpr *>(e)->value));
+            expr_cast<IntExpr>(e)->value));
         break;
     case NodeKind::Bool:
         results.push_back(std::make_unique<BoolExpr>(
-            static_cast<const BoolExpr *>(e)->value));
+            expr_cast<BoolExpr>(e)->value));
         break;
     case NodeKind::Var: {
-        auto *ve = static_cast<const VarExpr *>(e);
+        auto *ve = expr_cast<VarExpr>(e);
         if (mvars.count(ve->name) != 0U) {
             results.push_back(std::make_unique<GetExpr>(ve->name));
         } else {
@@ -152,44 +152,44 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         results.push_back(std::make_unique<ReadExpr>());
         break;
     case NodeKind::Unary: {
-        auto *ue = static_cast<const UnaryExpr *>(e);
+        auto *ue = expr_cast<UnaryExpr>(e);
         stack.push_back(UnaryBuild{ue->op});
         stack.push_back(EvalFrame{ue->operand.get()});
         break;
     }
     case NodeKind::Binary: {
-        auto *bine = static_cast<const BinaryExpr *>(e);
+        auto *bine = expr_cast<BinaryExpr>(e);
         stack.push_back(BinBuildLhs{bine->op, bine->rhs.get()});
         stack.push_back(EvalFrame{bine->lhs.get()});
         break;
     }
     case NodeKind::If: {
-        auto *ife = static_cast<const IfExpr *>(e);
+        auto *ife = expr_cast<IfExpr>(e);
         stack.push_back(IfBuildCond{ife->then_branch.get(),
                                      ife->else_branch.get()});
         stack.push_back(EvalFrame{ife->cond.get()});
         break;
     }
     case NodeKind::Let: {
-        auto *le = static_cast<const LetExpr *>(e);
+        auto *le = expr_cast<LetExpr>(e);
         stack.push_back(LetBuildInit{le->var, le->body.get()});
         stack.push_back(EvalFrame{le->init.get()});
         break;
     }
     case NodeKind::While: {
-        auto *we = static_cast<const WhileExpr *>(e);
+        auto *we = expr_cast<WhileExpr>(e);
         stack.push_back(WhileBuildCond{we->body.get()});
         stack.push_back(EvalFrame{we->cond.get()});
         break;
     }
     case NodeKind::SetBang: {
-        auto *se = static_cast<const SetBangExpr *>(e);
+        auto *se = expr_cast<SetBangExpr>(e);
         stack.push_back(SetBangBuild{se->var_name});
         stack.push_back(EvalFrame{se->expr.get()});
         break;
     }
     case NodeKind::Begin: {
-        auto *beg = static_cast<const BeginExpr *>(e);
+        auto *beg = expr_cast<BeginExpr>(e);
         if (beg->exprs.empty()) {
             results.push_back(std::make_unique<BeginExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -209,10 +209,10 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         break;
     case NodeKind::Get:
         results.push_back(std::make_unique<GetExpr>(
-            static_cast<const GetExpr *>(e)->name));
+            expr_cast<GetExpr>(e)->name));
         break;
     case NodeKind::Vector: {
-        auto *ve = static_cast<const VectorExpr *>(e);
+        auto *ve = expr_cast<VectorExpr>(e);
         if (ve->elems.empty()) {
             results.push_back(std::make_unique<VectorExpr>(
                 std::vector<std::unique_ptr<Expr>>{}));
@@ -228,19 +228,19 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         break;
     }
     case NodeKind::VectorRef: {
-        auto *vr = static_cast<const VectorRefExpr *>(e);
+        auto *vr = expr_cast<VectorRefExpr>(e);
         stack.push_back(VectorRefBuild{vr->index});
         stack.push_back(EvalFrame{vr->vec.get()});
         break;
     }
     case NodeKind::VectorSet: {
-        auto *vs = static_cast<const VectorSetExpr *>(e);
+        auto *vs = expr_cast<VectorSetExpr>(e);
         stack.push_back(VectorSetVecBuild{vs->index, vs->val.get()});
         stack.push_back(EvalFrame{vs->vec.get()});
         break;
     }
     case NodeKind::VectorLength: {
-        auto *vl = static_cast<const VectorLengthExpr *>(e);
+        auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthBuild{});
         stack.push_back(EvalFrame{vl->vec.get()});
         break;

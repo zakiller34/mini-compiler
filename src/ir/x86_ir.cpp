@@ -95,10 +95,10 @@ std::string dump_instr(const Instr &i) {
 
 std::string X86Program::dump() const {
     std::string result;
-    for (auto it = blocks.begin(); it != blocks.end(); ++it) {
-        result += it->first + ":\n";
-        for (size_t j = 0; j < it->second.instrs.size(); ++j) {
-            result += dump_instr(it->second.instrs[j]) + "\n";
+    for (const auto &[label, blk] : blocks) {
+        result += label + ":\n";
+        for (const auto &instr : blk.instrs) {
+            result += dump_instr(instr) + "\n";
         }
     }
     return result;
