@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+namespace mc {
+
 enum class TypeKind { Int, Bool, Void, Vector };
 
 struct Type;
@@ -28,3 +30,5 @@ TypePtr vector_type(std::vector<TypePtr> elems);
 
 /// @brief Check if type is a vector type
 bool is_vector_type(const TypePtr &t);
+
+} // namespace mc

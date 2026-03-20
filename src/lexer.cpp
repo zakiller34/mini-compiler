@@ -3,6 +3,8 @@
 #include <cctype>
 #include <string>
 
+namespace mc {
+
 /// @brief Construct lexer, read first character
 /// @requires in is valid readable stream
 Lexer::Lexer(std::istream &in) : input_(in) { advance(); }
@@ -115,3 +117,5 @@ Token Lexer::next() {
     advance();
     return {TokenKind::Error, err, 0};
 }
+
+} // namespace mc

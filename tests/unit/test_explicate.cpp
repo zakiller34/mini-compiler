@@ -10,6 +10,8 @@
 #include "passes/uncover_get.h"
 #include "passes/uniquify.h"
 
+using namespace mc;
+
 /// Helper: run full pipeline up to explicate_control.
 static cir::CProgram run_explicate(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));

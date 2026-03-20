@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace x86 {
+namespace mc::x86 {
 
 std::string reg_name(Reg r) {
     switch (r) {
@@ -104,4 +104,4 @@ std::string X86Program::dump() const {
     return result;
 }
 
-} // namespace x86
+} // namespace mc::x86

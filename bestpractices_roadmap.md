@@ -25,25 +25,25 @@
 - [x] Magic numbers — `select_instructions.cpp` — `kWordSize` constexpr
 - [x] Magic numbers — `expose_allocation.cpp` — `kWordSize` constexpr
 
-## Phase 2: Safety + Expressiveness — IN PROGRESS
+## Phase 2: Safety + Expressiveness — DONE
 
 - [x] Unsafe downcasts — 212× `static_cast` → `expr_cast<T>()` with debug assert across all passes
 - [x] No `std::optional` — `main.cpp` `parse_file` returns `std::optional<Program>`
-- [ ] Manual index loops — ~48 `for(size_t i=0;...)` → range-for / algorithms where clear win
+- [x] Manual index loops — 2 range-for conversions in `type.cpp`; 19/21 genuinely need index
 
-## Phase 3: Namespace Wrap
+## Phase 3: Namespace Wrap — DONE
 
-- [ ] No namespaces — all AST types, passes, lexer, parser → `namespace mc {}`
+- [x] No namespaces — all AST types, passes, lexer, parser → `namespace mc {}`; IR → `mc::cir`, `mc::x86`
 
-## Phase 4: DRY Refactor
+## Phase 4: DRY Refactor — PARTIAL
 
-- [ ] ~18 frame structs duplicated across 6+ passes (~500 lines) → extract shared frame structs
-- [ ] Common `push_eval` leaf cases duplicated → factor common leaf cases
+- [ ] ~18 frame structs duplicated across 6+ passes (~500 lines) → kept separate (user choice)
+- [x] Common `push_eval` leaf cases duplicated → `clone_leaf()` helper in `src/passes/clone_leaf.h`
 
 ## Phase 5: Process
 
-- [ ] No CI — GitHub Actions: build + test + lint
-- [ ] 1 structured binding — add structured bindings in map iterations
+- [ ] No CI — GitHub Actions: build + test + lint — deferred
+- [x] 1 structured binding — already uses structured bindings in map iterations
 
 ## Deferred (Low Priority)
 

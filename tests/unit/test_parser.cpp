@@ -5,6 +5,8 @@
 
 #include "ast.h"
 
+using namespace mc;
+
 // Test AST construction + dump() output (S-expr format).
 // Builds ASTs manually — no parser dependency.
 

@@ -6,6 +6,8 @@
 #include "ast.h"
 #include "type_checker.h"
 
+using namespace mc;
+
 /// @brief Z3 predicate: well_typed_no_stuck
 /// Encode type rules as functions: given operand types, result type is
 /// determined. Check NOT(pre => post) is UNSAT for each rule.

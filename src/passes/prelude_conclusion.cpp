@@ -2,6 +2,8 @@
 
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 /// @brief Initial heap size in bytes (16 KiB)
@@ -111,3 +113,5 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
 
     return result;
 }
+
+} // namespace mc

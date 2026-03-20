@@ -8,6 +8,8 @@
 #include "ast.h"
 #include "passes/uniquify.h"
 
+using namespace mc;
+
 /// Iteratively collect all LetExpr variable names in the AST.
 /// @requires root != nullptr
 /// @ensures result contains every let-bound name in tree order

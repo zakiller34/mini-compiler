@@ -4,6 +4,8 @@
 #include <variant>
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 enum class Action { Visit, Append };
@@ -263,3 +265,5 @@ std::string GlobalValueExpr::dump() const { return dump_iterative(this); }
 std::string Program::dump() const {
   return "(program " + dump_iterative(body.get()) + ")";
 }
+
+} // namespace mc

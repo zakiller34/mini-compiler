@@ -1,5 +1,7 @@
 #include "interference.h"
 
+namespace mc {
+
 namespace {
 
 /// Canonical pair ordering for move_edges
@@ -161,3 +163,5 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
 
     return graph;
 }
+
+} // namespace mc

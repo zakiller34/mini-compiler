@@ -7,6 +7,8 @@
 #include <variant>
 #include <vector>
 
+namespace mc {
+
 /// Heap-allocated tuple (elements are Values — forward ref via shared_ptr)
 struct TupleData;
 using Tuple = std::shared_ptr<TupleData>;
@@ -21,3 +23,5 @@ struct TupleData {
 /// @requires prog.body != nullptr
 /// @ensures result == semantics of prog
 Value interpret(const Program &prog, std::istream &in);
+
+} // namespace mc

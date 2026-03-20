@@ -22,6 +22,8 @@
 #include <optional>
 #include <string>
 
+using namespace mc;
+
 /// @brief Open and parse .mc file into AST
 /// @requires filename is a readable .mc file path
 /// @ensures result has value on success, nullopt on file error

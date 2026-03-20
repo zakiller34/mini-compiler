@@ -380,15 +380,21 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] Silent error → `assert(false)`
 - [x] Magic numbers → `constexpr` constants
 
-### Phase 2: Safety + Expressiveness — IN PROGRESS
+### Phase 2: Safety + Expressiveness — DONE
 - [x] 212× unsafe `static_cast` → `expr_cast<T>()` with debug assert
 - [x] `parse_file` returns `std::optional<Program>`
-- [ ] Manual index loops → range-for
+- [x] Manual index loops → range-for (2 converted; 19/21 genuinely need index)
 
-### Phase 3–5: TODO
-- [ ] Namespace wrap (`namespace mc {}`)
-- [ ] DRY refactor (frame structs, leaf cases)
-- [ ] CI + structured bindings
+### Phase 3: Namespace Wrap — DONE
+- [x] All headers → `namespace mc {}`; IR → `mc::cir`, `mc::x86`
+
+### Phase 4: DRY Refactor — PARTIAL
+- [x] `clone_leaf()` helper for shared leaf cases across 5 passes
+- [ ] Frame structs kept separate (intentional)
+
+### Phase 5: Process
+- [x] Structured bindings — already in use
+- [ ] CI — deferred
 
 ---
 

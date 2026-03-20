@@ -5,6 +5,8 @@
 
 #include "interference.h"
 
+namespace mc {
+
 /// @brief Color interference graph using DSATUR with move biasing
 /// @requires graph is valid undirected graph; Reg nodes pre-colored
 /// @ensures no two adjacent nodes share a color
@@ -24,3 +26,5 @@ int reg_to_color(x86::Reg r);
 
 /// @brief Allocable registers in color order
 const std::vector<x86::Reg> &allocable_regs();
+
+} // namespace mc

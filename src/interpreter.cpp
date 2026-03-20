@@ -6,6 +6,8 @@
 #include <variant>
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 /// Flat mutable environment — correct post-uniquify since all names unique.
@@ -313,3 +315,5 @@ Value interpret(const Program &prog, std::istream &in) {
     }
     return values.back();
 }
+
+} // namespace mc

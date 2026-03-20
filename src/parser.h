@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 
+namespace mc {
+
 /// @brief Parse error exception
 class ParseError : public std::runtime_error {
   public:
@@ -53,3 +55,5 @@ class Parser {
     std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
 };
+
+} // namespace mc

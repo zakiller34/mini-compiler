@@ -13,6 +13,8 @@
 #include "passes/shrink.h"
 #include "passes/uncover_get.h"
 
+using namespace mc;
+
 /// Helper: run pipeline through select_instructions.
 static x86::X86Program run_select(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));

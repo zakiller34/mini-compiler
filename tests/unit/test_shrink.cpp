@@ -6,6 +6,8 @@
 #include "ast.h"
 #include "passes/shrink.h"
 
+using namespace mc;
+
 /// Check that no And/Or BinaryOp remains in an expression tree.
 /// Uses iterative stack traversal.
 static bool no_and_or(const Expr &expr) {

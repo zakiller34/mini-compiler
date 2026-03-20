@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace cir {
+namespace mc::cir {
 
 std::string dump_atom(const Atom &a) {
     if (const auto *i = std::get_if<IntAtom>(&a)) {
@@ -99,4 +99,4 @@ std::string CProgram::dump() const {
     return result;
 }
 
-} // namespace cir
+} // namespace mc::cir

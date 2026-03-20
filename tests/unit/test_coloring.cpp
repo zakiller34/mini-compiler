@@ -8,6 +8,8 @@
 #include "passes/graph_coloring.h"
 #include "passes/interference.h"
 
+using namespace mc;
+
 /// @brief Validate coloring: no two adjacent nodes share a color
 static bool valid_coloring(const Graph &graph,
                            const std::map<Location, int> &coloring) {

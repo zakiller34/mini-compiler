@@ -4,6 +4,8 @@
 #include <map>
 #include <queue>
 
+namespace mc {
+
 namespace {
 
 /// @brief Extract var name from arg if it is a VarArg
@@ -220,3 +222,5 @@ analyze_liveness_program(const x86::X86Program &prog) {
     }
     return result;
 }
+
+} // namespace mc

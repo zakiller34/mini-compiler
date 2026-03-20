@@ -7,6 +7,8 @@
 
 #include "../ir/x86_ir.h"
 
+namespace mc {
+
 /// @brief Compute live-after sets for each instruction (single block)
 std::vector<std::set<std::string>>
 analyze_liveness(const x86::Block &block);
@@ -19,3 +21,5 @@ analyze_liveness_program(const x86::X86Program &prog);
 
 std::set<std::string> instr_reads(const x86::Instr &instr);
 std::set<std::string> instr_writes(const x86::Instr &instr);
+
+} // namespace mc

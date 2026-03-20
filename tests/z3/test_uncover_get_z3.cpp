@@ -9,6 +9,8 @@
 #include "ast.h"
 #include "passes/uncover_get.h"
 
+using namespace mc;
+
 /// @brief Z3 predicate: uncover_get ensures no VarExpr for set! targets
 /// For each mutable var v, assert "VarExpr(v) exists in output" and check UNSAT.
 static bool z3_no_var_for_mutable(const Program &result,

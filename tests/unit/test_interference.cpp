@@ -8,6 +8,8 @@
 #include "passes/interference.h"
 #include "passes/liveness.h"
 
+using namespace mc;
+
 /// Helper: build block, run liveness, build interference
 static Graph build_graph_from(std::vector<x86::Instr> instrs) {
     x86::Block block{std::move(instrs)};

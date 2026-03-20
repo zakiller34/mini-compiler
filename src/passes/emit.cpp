@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 std::string emit_arg(const x86::Arg &a) {
@@ -102,3 +104,5 @@ std::string emit(const x86::X86Program &prog) {
     }
     return result;
 }
+
+} // namespace mc

@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-namespace cir {
+namespace mc::cir {
 
 // -- Atoms --
 
@@ -80,4 +80,4 @@ std::string dump_atom(const Atom &a);
 std::string dump_cexpr(const CExpr &e);
 std::string dump_tail(const Tail &t);
 
-} // namespace cir
+} // namespace mc::cir

@@ -9,6 +9,8 @@
 #include "passes/shrink.h"
 #include "passes/uncover_get.h"
 
+using namespace mc;
+
 /// Check whether an expression is atomic (IntExpr or VarExpr).
 static bool is_atomic(const Expr *e) {
   return e->kind() == NodeKind::Int || e->kind() == NodeKind::Var;

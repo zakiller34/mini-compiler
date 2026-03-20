@@ -5,6 +5,8 @@
 
 #include <stdexcept>
 
+namespace mc {
+
 class TypeError : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -14,3 +16,5 @@ public:
 /// @requires prog.body != nullptr
 /// @ensures returns type if well-typed, throws TypeError otherwise
 TypePtr type_check(const Program &prog);
+
+} // namespace mc

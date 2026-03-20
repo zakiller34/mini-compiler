@@ -2,6 +2,8 @@
 
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 bool is_mem(const x86::Arg &a) {
@@ -106,3 +108,5 @@ x86::X86Program patch_instructions(const x86::X86Program &prog) {
     }
     return result;
 }
+
+} // namespace mc

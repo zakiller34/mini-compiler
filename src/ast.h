@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+namespace mc {
+
 enum class UnaryOp { Neg, Not };
 enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
@@ -257,3 +259,5 @@ public:
   explicit Program(std::unique_ptr<Expr> b) : body(std::move(b)) {}
   std::string dump() const;
 };
+
+} // namespace mc

@@ -9,6 +9,8 @@
 #include "passes/graph_coloring.h"
 #include "passes/interference.h"
 
+using namespace mc;
+
 /// @brief Z3 predicate: valid_coloring
 /// ForAll (u,v) in edges, color(u) != color(v)
 /// Uses Z3 to verify the property universally

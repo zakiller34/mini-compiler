@@ -9,6 +9,8 @@
 #include "interference.h"
 #include "liveness.h"
 
+namespace mc {
+
 namespace {
 
 /// @brief Word size in bytes for stack slot layout
@@ -187,3 +189,5 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
     }
     return result;
 }
+
+} // namespace mc

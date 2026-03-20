@@ -13,6 +13,8 @@
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
 
+using namespace mc;
+
 /// Helper: run pipeline through patch_instructions.
 static x86::X86Program run_patch(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));

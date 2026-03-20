@@ -9,7 +9,7 @@
 #include <variant>
 #include <vector>
 
-namespace x86 {
+namespace mc::x86 {
 
 enum class Reg {
   Rsp, Rbp, Rax, Rbx, Rcx, Rdx, Rsi, Rdi,
@@ -67,4 +67,4 @@ std::string cc_name(CC cc);
 std::string dump_arg(const Arg &a);
 std::string dump_instr(const Instr &i);
 
-} // namespace x86
+} // namespace mc::x86

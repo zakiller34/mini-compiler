@@ -8,6 +8,8 @@
 #include "ir/x86_ir.h"
 #include "passes/liveness.h"
 
+using namespace mc;
+
 /// @brief Z3 predicate: liveness_covers_uses
 /// ForAll v k, if v is used at instruction k, then v is in live_after
 /// for some earlier instruction (or in live_before[k]).

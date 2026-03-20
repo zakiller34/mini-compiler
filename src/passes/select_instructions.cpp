@@ -2,6 +2,8 @@
 
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 /// @brief Word size in bytes for heap object layout
@@ -166,3 +168,5 @@ x86::X86Program select_instructions(const cir::CProgram &prog) {
     }
     return result;
 }
+
+} // namespace mc

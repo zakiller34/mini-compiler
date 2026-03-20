@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <limits>
 
+namespace mc {
+
 namespace {
 
 /// @brief Compute saturation of a node (number of distinct colors among
@@ -178,3 +180,5 @@ std::map<Location, int> color_graph(const Graph &graph, int num_regs) {
 
     return coloring;
 }
+
+} // namespace mc

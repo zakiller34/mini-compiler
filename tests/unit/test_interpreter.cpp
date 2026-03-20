@@ -7,6 +7,8 @@
 #include "ast.h"
 #include "interpreter.h"
 
+using namespace mc;
+
 /// Helper: interpret program, extract int64_t result.
 static int64_t run(std::unique_ptr<Expr> body,
                    const std::string &input = "") {

@@ -5,6 +5,8 @@
 #include "ast.h"
 #include "passes/uncover_get.h"
 
+using namespace mc;
+
 TEST(UncoverGet, NoSetBangNoChange) {
     // let x = 42; x — no set!, so VarExpr stays VarExpr
     auto body = std::make_unique<LetExpr>(

@@ -6,6 +6,8 @@
 #include <variant>
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 using TypeEnv = std::map<std::string, TypePtr>;
@@ -383,3 +385,5 @@ TypePtr type_check(const Program &prog) {
     }
     return types.back();
 }
+
+} // namespace mc

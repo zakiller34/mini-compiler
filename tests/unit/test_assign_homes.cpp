@@ -13,6 +13,8 @@
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
 
+using namespace mc;
+
 /// Helper: run pipeline through assign_homes.
 static x86::X86Program run_assign(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));

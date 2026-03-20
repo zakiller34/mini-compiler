@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+namespace mc {
+
 Parser::Parser(Lexer &lex) : lex_(lex), cur_(lex_.next()) {}
 
 /// @brief Consume current token, advance to next
@@ -270,3 +272,5 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         throw ParseError("unexpected token: '" + cur_.text + "'");
     }
 }
+
+} // namespace mc

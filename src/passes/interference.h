@@ -9,6 +9,8 @@
 
 #include "../ir/x86_ir.h"
 
+namespace mc {
+
 /// Type-safe graph node: either a variable name or a register
 using Location = std::variant<std::string, x86::Reg>;
 
@@ -38,3 +40,5 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
 
 /// Caller-saved registers that get clobbered by callq
 const std::vector<x86::Reg> &caller_saved_regs();
+
+} // namespace mc

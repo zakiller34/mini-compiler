@@ -6,6 +6,8 @@
 #include "type.h"
 #include "type_checker.h"
 
+using namespace mc;
+
 /// Helper: type-check a single expression, return TypeKind.
 static TypeKind check(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));

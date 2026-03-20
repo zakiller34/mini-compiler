@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+namespace mc {
+
 namespace {
 
 /// @brief Generate unique label with prefix
@@ -528,3 +530,5 @@ cir::CProgram explicate_control(const Program &prog) {
 
     return cir::CProgram{std::move(blocks)};
 }
+
+} // namespace mc

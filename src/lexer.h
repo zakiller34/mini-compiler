@@ -4,6 +4,8 @@
 #include <istream>
 #include <string>
 
+namespace mc {
+
 enum class TokenKind {
     IntLit,
     Ident,
@@ -71,3 +73,5 @@ class Lexer {
     /// @brief Skip whitespace and comments
     void skip_ws();
 };
+
+} // namespace mc

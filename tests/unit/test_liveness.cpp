@@ -6,6 +6,8 @@
 #include "ir/x86_ir.h"
 #include "passes/liveness.h"
 
+using namespace mc;
+
 /// Helper: build a block from instructions
 static x86::Block make_block(std::vector<x86::Instr> instrs) {
     return x86::Block{std::move(instrs)};

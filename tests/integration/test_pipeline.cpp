@@ -18,6 +18,8 @@
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
 
+using namespace mc;
+
 /// Run full pipeline: AST -> assembly string.
 static std::string run_pipeline(std::unique_ptr<Expr> body) {
   Program prog(std::move(body));
