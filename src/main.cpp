@@ -7,9 +7,11 @@
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
 #include "passes/expose_allocation.h"
+#include "passes/limit_functions.h"
 #include "passes/patch_instructions.h"
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
+#include "passes/reveal_functions.h"
 #include "passes/select_instructions.h"
 #include "passes/shrink.h"
 #include "passes/uncover_get.h"
@@ -36,7 +38,7 @@ std::optional<Program> parse_file(const std::string &filename) {
     Lexer lex(ifs);
     Parser parser(lex);
     auto p = parser.parse_program();
-    return Program{std::move(p->body)};
+    return Program{std::move(p->defs), std::move(p->body)};
 }
 
 /// @brief Full compilation pipeline: parse -> type check -> passes -> emit x86
@@ -54,7 +56,11 @@ int compile(const std::string &src_file, const std::string &out_file) {
 
     auto p0 = shrink(*prog);
     auto p1 = uniquify(*p0);
-    auto p1b = uncover_get(*p1);
+    auto p1a = reveal_functions(*p1);
+    // limit_functions is identity for <=6 params (returns nullptr)
+    auto p1a2 = limit_functions(*p1a);
+    const auto &p1a_ref = p1a2 ? *p1a2 : *p1a;
+    auto p1b = uncover_get(p1a_ref);
     auto p1c = expose_allocation(*p1b);
     auto p2 = remove_complex_operands(*p1c);
     auto c_prog = explicate_control(*p2);

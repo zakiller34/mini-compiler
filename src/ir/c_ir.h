@@ -36,12 +36,15 @@ struct CVectorSetExpr { Atom vec; int64_t index; Atom val; };
 struct CVectorLengthExpr { Atom vec; };
 struct CGlobalValueExpr { std::string name; };
 struct CCollectExpr { int64_t bytes; };
+struct CFunRefExpr { std::string name; int64_t arity; };
+struct CCallExpr { Atom func; std::vector<Atom> args; };
+struct CTailCallExpr { Atom func; std::vector<Atom> args; };
 
 using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr,
                            CCmpExpr, CNotExpr,
                            CAllocateExpr, CVectorRefExpr, CVectorSetExpr,
                            CVectorLengthExpr, CGlobalValueExpr,
-                           CCollectExpr>;
+                           CCollectExpr, CFunRefExpr, CCallExpr>;
 
 // -- Statements --
 
@@ -58,8 +61,9 @@ struct IfStmt {
     std::string then_label;
     std::string else_label;
 };
+struct TailCall { Atom func; std::vector<Atom> args; };
 
-using Tail = std::variant<Return, Goto, IfStmt>;
+using Tail = std::variant<Return, Goto, IfStmt, TailCall>;
 
 // -- Basic block --
 
@@ -68,11 +72,21 @@ struct BasicBlock {
   Tail tail;
 };
 
+// -- Per-function CFG --
+
+struct CFunctionDef {
+  std::string name;
+  std::vector<std::string> params;
+  std::map<std::string, BasicBlock> blocks;
+  std::map<std::string, TypePtr> var_types;
+};
+
 // -- C_Var program --
 
 struct CProgram {
   std::map<std::string, BasicBlock> blocks;
   std::map<std::string, TypePtr> var_types;
+  std::vector<CFunctionDef> defs;
   std::string dump() const;
 };
 

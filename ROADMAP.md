@@ -262,49 +262,58 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ---
 
-## Phase 6: Functions (Book Ch. 7, pp. 125-141)
+## Phase 6: Functions (Book Ch. 7, pp. 125-141) — IN PROGRESS
 
 **Language: L_Fun** — top-level function definitions, first-class function pointers, tail calls.
 
-### 6A — Frontend
+### 6A — Frontend ✅
 
-- [ ] New tokens: `DEF` (or `fn`/`func`), `ARROW` (`->`), `RETURN`
-- [ ] Grammar: `def name(params) -> type { body }`, function application `f(args)`, function type `(T1, ...) -> Tr`
-- [ ] AST nodes: `DefNode`, `ApplyExpr`, `FunRefExpr`, `ProgramDefs`
-- [ ] Type checker: build env from all defs (mutual recursion); check arg types match param types; return type matches body
-- [ ] Interpreter: function values, application, mutual recursion
+- [x] New tokens: `Fn`, `Arrow` (`->`), `Colon` (`:`), `Int_kw`, `Bool_kw`
+- [x] Grammar: `fn name(params) : type { body }`, function application `f(args)`, type annotations
+- [x] AST nodes: `DefNode`, `ApplyExpr`, `FunRefExpr`; `Program.defs` vector
+- [x] Type system: `TypeKind::Function`, `fun_type(params, ret)`, `is_fun_type()`
+- [x] Type checker: build env from all defs (mutual recursion); check arg count/types; return type matches body
+- [x] Interpreter: `FunctionValue{name, arity}` in Value variant; lookup def + eval body on apply
 
-### 6B — Compiler Passes
+### 6B — Compiler Passes ✅
 
-- [ ] **shrink** — wrap top-level expression in implicit `main() -> int` def
-- [ ] **reveal_functions** — distinguish function names from variables: `Var(f)` -> `FunRef(f, arity)`
-- [ ] **limit_functions** — pack args 6+ into a tuple as 6th argument
-- [ ] Update **remove_complex_operands** — `FunRef` is complex (needs `leaq`); `Apply` is complex
-- [ ] **explicate_control** — `Apply` -> `Call` (assignment/predicate context) or `TailCall` (tail context); per-function CFGs
-- [ ] **select_instructions** — parameter passing via `rdi, rsi, rdx, rcx, r8, r9`; `FunRef` -> `leaq f(%rip)`; `Call` -> move args to regs + `callq *reg` + `movq %rax, dst`; `TailCall` -> move args + pop frame + `jmp *%rax`; `.align 8` on function labels
-- [ ] Liveness: `IndirectCallq` writes all caller-saved regs; `TailJmp` reads arg regs + target
-- [ ] Interference: per-function graph; tuple-typed vars interfere with callee-saved regs across any user call (not just `collect`)
-- [ ] **allocate_registers** — run per function definition
-- [ ] **prelude/conclusion** — per-function prologue/epilogue; `main` prelude calls `initialize` and sets `r15`
-- [ ] Test: recursion, mutual recursion, higher-order (pass/return functions), tail calls
+- [x] **reveal_functions** (new) — `Var(f)` → `FunRef(f, arity)` for function names
+- [x] **limit_functions** (new, stub) — passthrough for ≤6 params (full impl deferred)
+- [x] All AST passes (shrink, uniquify, uncover_get, expose_allocation, rco) — handle Apply/FunRef + loop over defs
+- [x] C IR extended: `CFunRefExpr`, `CCallExpr`, `CTailCallExpr`; `TailCall` tail; `CFunctionDef`
+- [x] x86 IR extended: `IndirectCallq`, `TailJmp`; `X86FunctionDef`
+- [x] **explicate_control** — per-def CFGs; Apply in tail position → `TailCall` (function defs only); Apply in non-tail → `CCallExpr`
+- [x] **select_instructions** — `FunRef` → `leaq f(%rip)`; `CCallExpr` → args to rdi/rsi/rdx/rcx/r8/r9 + `IndirectCallq`; `TailCall` → args + `TailJmp`; param movs in start block
+- [x] **liveness** — `IndirectCallq`/`TailJmp` reads tracked
+- [x] **interference** — `IndirectCallq` clobbers caller-saved (like `Callq`)
+- [x] **assign_homes** — per-function independent liveness/interference/coloring
+- [x] **patch_instructions** — per-function; IndirectCallq/TailJmp pass through
+- [x] **prelude/conclusion** — per-function prologue/epilogue; label prefixing to avoid collisions; TailJmp preceded by frame teardown; only main calls `initialize`
+- [x] **emit** — function defs emitted with `.globl`; `IndirectCallq` → `callq *arg`; `TailJmp` → `jmp *arg`
+- [x] End-to-end: 6 phase6 .mc programs (simple_call, two_args, multi_fn, factorial/sum_to, mutual_recursion, tail_call)
 
-### 6 — Tests (TDD)
+### 6 — Tests — PARTIAL
 
-- [ ] `test_reveal_functions.cpp` — function names replaced with FunRef
-- [ ] `test_limit_functions.cpp` — args 6+ packed into tuple
-- [ ] `test_select_calls.cpp` — args in correct registers, callq/jmp emitted
-- [ ] `test_tail_calls.cpp` — tail calls don't grow stack
-- [ ] Integration: function programs in `tests/programs/phase6/`
+- [x] All 19 existing unit/integration tests pass (backward compat)
+- [x] 6 `.mc` programs in `tests/programs/phase6/` compile + run correctly
+- [ ] `test_reveal_functions.cpp` — unit tests for reveal_functions pass
+- [ ] `test_limit_functions.cpp` — unit tests for limit_functions pass
+- [ ] `test_parser.cpp` — parse def, parse apply, parse type annotations
+- [ ] `test_type_checker.cpp` — function def/apply type checking tests
+- [ ] `test_interpreter.cpp` — function call/recursion tests
+- [ ] `test_select_calls.cpp` — args in correct registers, IndirectCallq/TailJmp
+- [ ] `test_pipeline.cpp` — function pipeline integration tests
+- [ ] Z3: `test_calling_convention_z3.cpp` — args_in_correct_registers, tail_call_no_stack_growth
 
-### 6 — Z3 Predicate Tests
+### 6 — Known Issues / TODO
 
-- [ ] `args_in_correct_registers(call_site)` — first 6 args in rdi/rsi/rdx/rcx/r8/r9
-- [ ] `tail_call_no_stack_growth(prog)` — tail-recursive calls reuse caller's frame
-
-### 6 — Lean Proofs
-
-- [ ] `calling_convention_correct` — args placed per System V ABI
-- [ ] `tail_call_stack_invariant` — stack depth bounded for tail-recursive programs
+- [ ] `limit_functions` — full implementation (pack >6 args into tuple); currently stub
+- [ ] Higher-order function tests (pass/return functions) — not yet tested
+- [ ] `.align 8` on function labels in emit
+- [ ] Lean stubs: `AST.lean` update, `Passes/RevealFunctions.lean`, `Passes/LimitFunctions.lean`
+- [ ] Lean theorems: `calling_convention_correct`, `tail_call_stack_invariant`
+- [ ] Changeset `.changeset/009_functions.md`
+- [ ] Pre-existing bug: `read() + 10` fails compilation (explicate_control assertion in `make_atom` for ReadExpr in non-atomic position — pre-dates Phase 6)
 
 ---
 

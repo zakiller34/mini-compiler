@@ -42,6 +42,11 @@ enum class TokenKind {
     RBracket,
     VectorKw,
     Length,
+    Fn,
+    Arrow,
+    Colon,
+    Int_kw,
+    Bool_kw,
     Eof,
     Error
 };

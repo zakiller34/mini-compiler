@@ -111,6 +111,20 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
                                      x86::RegArg{x86::Reg::Rsi}});
         instrs.push_back(x86::Callq{"collect", 2});
         instrs.push_back(x86::Movq{x86::Imm{0}, dst});
+    } else if (const auto *fr = std::get_if<cir::CFunRefExpr>(&expr)) {
+        instrs.push_back(x86::Leaq{x86::GlobalArg{fr->name}, dst});
+    } else if (const auto *ca = std::get_if<cir::CCallExpr>(&expr)) {
+        static const x86::Reg arg_regs[] = {
+            x86::Reg::Rdi, x86::Reg::Rsi, x86::Reg::Rdx,
+            x86::Reg::Rcx, x86::Reg::R8, x86::Reg::R9};
+        // invariant: args[0..i) moved to arg_regs[0..i)
+        for (size_t i = 0; i < ca->args.size() && i < 6; ++i) {
+            instrs.push_back(x86::Movq{atom_to_arg(ca->args[i]),
+                x86::RegArg{arg_regs[i]}});
+        }
+        instrs.push_back(x86::IndirectCallq{atom_to_arg(ca->func),
+            static_cast<int64_t>(ca->args.size())});
+        instrs.push_back(x86::Movq{x86::RegArg{x86::Reg::Rax}, dst});
     }
 }
 
@@ -126,6 +140,17 @@ void emit_tail(const cir::Tail &tail, std::vector<x86::Instr> &instrs) {
                                      atom_to_arg(is->lhs)});
         instrs.push_back(x86::JmpIf{cmp_to_cc(is->op), is->then_label});
         instrs.push_back(x86::Jmp{is->else_label});
+    } else if (const auto *tc = std::get_if<cir::TailCall>(&tail)) {
+        static const x86::Reg arg_regs[] = {
+            x86::Reg::Rdi, x86::Reg::Rsi, x86::Reg::Rdx,
+            x86::Reg::Rcx, x86::Reg::R8, x86::Reg::R9};
+        // invariant: args[0..i) moved to arg_regs[0..i)
+        for (size_t i = 0; i < tc->args.size() && i < 6; ++i) {
+            instrs.push_back(x86::Movq{atom_to_arg(tc->args[i]),
+                x86::RegArg{arg_regs[i]}});
+        }
+        instrs.push_back(x86::TailJmp{atom_to_arg(tc->func),
+            static_cast<int64_t>(tc->args.size())});
     }
 }
 
@@ -141,9 +166,10 @@ x86::Block select_block(const cir::BasicBlock &blk) {
 
 } // namespace
 
-/// @brief Check if CProgram has any tuple/GC operations
-static bool has_gc_ops(const cir::CProgram &prog) {
-    for (const auto &[label, blk] : prog.blocks) {
+/// @brief Check if a block map has GC operations
+static bool blocks_have_gc(
+    const std::map<std::string, cir::BasicBlock> &blocks) {
+    for (const auto &[label, blk] : blocks) {
         for (const auto &stmt : blk.stmts) {
             if (std::holds_alternative<cir::CAllocateExpr>(stmt.expr) ||
                 std::holds_alternative<cir::CCollectExpr>(stmt.expr) ||
@@ -151,6 +177,15 @@ static bool has_gc_ops(const cir::CProgram &prog) {
                 return true;
             }
         }
+    }
+    return false;
+}
+
+/// @brief Check if CProgram has any tuple/GC operations
+static bool has_gc_ops(const cir::CProgram &prog) {
+    if (blocks_have_gc(prog.blocks)) return true;
+    for (const auto &def : prog.defs) {
+        if (blocks_have_gc(def.blocks)) return true;
     }
     return false;
 }
@@ -165,6 +200,34 @@ x86::X86Program select_instructions(const cir::CProgram &prog) {
     }
     for (const auto &[label, blk] : prog.blocks) {
         result.blocks[label] = select_block(blk);
+    }
+
+    // Process each function def
+    // invariant: result.defs has x86 defs for prog.defs[0..i)
+    for (const auto &cdef : prog.defs) {
+        x86::X86FunctionDef xdef;
+        xdef.name = cdef.name;
+        xdef.var_types = cdef.var_types;
+        for (const auto &[label, blk] : cdef.blocks) {
+            xdef.blocks[label] = select_block(blk);
+        }
+        // Move args from arg regs to param vars in start block
+        auto &start_blk = xdef.blocks["start"];
+        static const x86::Reg arg_regs[] = {
+            x86::Reg::Rdi, x86::Reg::Rsi, x86::Reg::Rdx,
+            x86::Reg::Rcx, x86::Reg::R8, x86::Reg::R9};
+        std::vector<x86::Instr> param_instrs;
+        // invariant: param_instrs has movs for params[0..i)
+        for (size_t i = 0; i < cdef.params.size() && i < 6; ++i) {
+            param_instrs.push_back(x86::Movq{
+                x86::RegArg{arg_regs[i]},
+                x86::VarArg{cdef.params[i]}});
+        }
+        param_instrs.insert(param_instrs.end(),
+            start_blk.instrs.begin(), start_blk.instrs.end());
+        start_blk.instrs = std::move(param_instrs);
+
+        result.defs.push_back(std::move(xdef));
     }
     return result;
 }

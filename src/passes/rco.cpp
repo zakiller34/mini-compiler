@@ -31,6 +31,7 @@ struct VectorRefBuild { int64_t index; Need need; };
 struct VectorSetVecBuild { int64_t index; const Expr *val; Need need; };
 struct VectorSetValBuild { int64_t index; Need need; };
 struct VectorLengthBuild { Need need; };
+struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; Need need; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -38,7 +39,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            WhileBuildCond, WhileBuildBody,
                            SetBangBuild, BeginBuild,
                            VectorRefBuild, VectorSetVecBuild,
-                           VectorSetValBuild, VectorLengthBuild>;
+                           VectorSetValBuild, VectorLengthBuild,
+                           ApplyBuild>;
 
 using Binding = std::pair<std::string, std::unique_ptr<Expr>>;
 
@@ -192,6 +194,24 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{vl->vec.get(), Need::Atom});
         break;
     }
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        Result res = {std::make_unique<FunRefExpr>(fr->name, fr->arity), {}};
+        atomize(res, ef.need, tmp_counter);
+        results.push_back(std::move(res));
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ap = expr_cast<ApplyExpr>(e);
+        size_t total = 1 + ap->args.size();
+        std::vector<const Expr *> remaining;
+        for (size_t i = 0; i < ap->args.size(); ++i) {
+            remaining.push_back(ap->args[i].get());
+        }
+        stack.push_back(ApplyBuild{total, std::move(remaining), ef.need});
+        stack.push_back(EvalFrame{ap->func.get(), Need::Atom});
+        break;
+    }
     case NodeKind::Vector:
         // Should not appear after expose_allocation
         results.push_back({std::make_unique<VoidExpr>(), {}});
@@ -303,6 +323,32 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         res.expr = std::make_unique<VectorLengthExpr>(std::move(vec.expr));
         atomize(res, vl->need, tmp_counter);
         results.push_back(std::move(res));
+    } else if (auto *ab = std::get_if<ApplyBuild>(&frame)) {
+        if (ab->remaining.empty()) {
+            size_t num_args = ab->total - 1;
+            std::vector<std::unique_ptr<Expr>> args;
+            std::vector<Binding> all_bindings;
+            for (size_t i = 0; i < num_args; ++i) {
+                auto r = std::move(results.back()); results.pop_back();
+                for (auto &b : r.bindings) all_bindings.push_back(std::move(b));
+                args.push_back(std::move(r.expr));
+            }
+            std::reverse(args.begin(), args.end());
+            auto func_r = std::move(results.back()); results.pop_back();
+            Result res;
+            res.bindings = std::move(func_r.bindings);
+            for (auto &b : all_bindings) res.bindings.push_back(std::move(b));
+            res.expr = std::make_unique<ApplyExpr>(
+                std::move(func_r.expr), std::move(args));
+            atomize(res, ab->need, tmp_counter);
+            results.push_back(std::move(res));
+        } else {
+            const Expr *next = ab->remaining[0];
+            std::vector<const Expr *> rest(ab->remaining.begin() + 1,
+                                            ab->remaining.end());
+            stack.push_back(ApplyBuild{ab->total, std::move(rest), ab->need});
+            stack.push_back(EvalFrame{next, Need::Atom});
+        }
     } else if (auto *bb = std::get_if<BeginBuild>(&frame)) {
         if (bb->remaining.empty()) {
             std::vector<std::unique_ptr<Expr>> exprs;
@@ -325,16 +371,12 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
     }
 }
 
-} // namespace
-
-/// @brief Remove complex operands: all operator args become atomic
-/// @requires prog.body != nullptr
-/// @ensures result has only atomic (Int/Bool/Var) operands in Unary/Binary
-std::unique_ptr<Program> remove_complex_operands(const Program &prog) {
+/// @brief Process a single expression through RCO
+/// @requires root != nullptr
+std::unique_ptr<Expr> rco_expr(const Expr *root, int &tmp_counter) {
     std::vector<Frame> stack;
     std::vector<Result> results;
-    int tmp_counter = 0;
-    stack.push_back(EvalFrame{prog.body.get(), Need::Expr});
+    stack.push_back(EvalFrame{root, Need::Expr});
 
     // decreases: stack.size()
     while (!stack.empty()) {
@@ -347,8 +389,25 @@ std::unique_ptr<Program> remove_complex_operands(const Program &prog) {
         }
     }
     auto &res = results.back();
-    auto body = wrap_bindings(std::move(res.expr), res.bindings);
-    return std::make_unique<Program>(std::move(body));
+    return wrap_bindings(std::move(res.expr), res.bindings);
+}
+
+} // namespace
+
+/// @brief Remove complex operands: all operator args become atomic
+/// @requires prog.body != nullptr
+/// @ensures result has only atomic (Int/Bool/Var) operands in Unary/Binary
+std::unique_ptr<Program> remove_complex_operands(const Program &prog) {
+    int tmp_counter = 0;
+    std::vector<DefNode> new_defs;
+    // invariant: new_defs[0..i) processed
+    for (const auto &def : prog.defs) {
+        auto new_body = rco_expr(def.body.get(), tmp_counter);
+        new_defs.push_back(DefNode{def.name, def.params, def.ret_type,
+                                    std::move(new_body)});
+    }
+    auto new_body = rco_expr(prog.body.get(), tmp_counter);
+    return std::make_unique<Program>(std::move(new_defs), std::move(new_body));
 }
 
 } // namespace mc

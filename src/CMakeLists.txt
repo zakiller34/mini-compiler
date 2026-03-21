@@ -24,6 +24,8 @@ add_library(mc_lib STATIC
     passes/patch_instructions.cpp
     passes/prelude_conclusion.cpp
     passes/emit.cpp
+    passes/reveal_functions.cpp
+    passes/limit_functions.cpp
 )
 
 target_include_directories(mc_lib PUBLIC

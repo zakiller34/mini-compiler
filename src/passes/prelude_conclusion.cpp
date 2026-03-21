@@ -111,6 +111,116 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
     conclusion.instrs.push_back(x86::Retq{});
     result.blocks["conclusion"] = std::move(conclusion);
 
+    // Process each function def (clear copied defs first)
+    result.defs.clear();
+    // invariant: result.defs has prologue/epilogue for prog.defs[0..i)
+    for (const auto &xdef : prog.defs) {
+        x86::X86FunctionDef new_def = xdef;
+        auto fn_callee = ordered_callee_saved(xdef.used_callee_saved);
+
+        // Function prologue
+        x86::Block func_entry;
+        func_entry.instrs.push_back(
+            x86::Pushq{x86::RegArg{x86::Reg::Rbp}});
+        func_entry.instrs.push_back(
+            x86::Movq{x86::RegArg{x86::Reg::Rsp},
+                       x86::RegArg{x86::Reg::Rbp}});
+        // invariant: fn_callee[0..i) pushed
+        for (const auto &reg : fn_callee) {
+            func_entry.instrs.push_back(x86::Pushq{x86::RegArg{reg}});
+        }
+        if (xdef.stack_space > 0) {
+            func_entry.instrs.push_back(
+                x86::Subq{x86::Imm{xdef.stack_space},
+                           x86::RegArg{x86::Reg::Rsp}});
+        }
+        func_entry.instrs.push_back(
+            x86::Jmp{xdef.name + "_start"});
+        new_def.blocks[xdef.name] = std::move(func_entry);
+
+        // Rename ALL blocks to "funcname_label" to avoid collision
+        // Collect original labels first, then rename
+        std::vector<std::string> orig_labels;
+        for (const auto &[label, blk] : new_def.blocks) {
+            if (label != xdef.name) { // skip entry we just created
+                orig_labels.push_back(label);
+            }
+        }
+        // invariant: orig_labels[0..i) renamed
+        for (const auto &old_label : orig_labels) {
+            std::string new_label = xdef.name + "_" + old_label;
+            new_def.blocks[new_label] =
+                std::move(new_def.blocks[old_label]);
+            new_def.blocks.erase(old_label);
+        }
+
+        // Insert epilogue before TailJmp instructions
+        for (auto &[lbl, blk] : new_def.blocks) {
+            std::vector<x86::Instr> new_instrs;
+            for (auto &instr : blk.instrs) {
+                if (std::holds_alternative<x86::TailJmp>(instr)) {
+                    if (xdef.stack_space > 0) {
+                        new_instrs.push_back(x86::Addq{
+                            x86::Imm{xdef.stack_space},
+                            x86::RegArg{x86::Reg::Rsp}});
+                    }
+                    for (auto ci = static_cast<int64_t>(fn_callee.size()) - 1;
+                         ci >= 0; --ci) {
+                        new_instrs.push_back(x86::Popq{x86::RegArg{
+                            fn_callee[static_cast<size_t>(ci)]}});
+                    }
+                    new_instrs.push_back(x86::Popq{
+                        x86::RegArg{x86::Reg::Rbp}});
+                }
+                new_instrs.push_back(std::move(instr));
+            }
+            blk.instrs = std::move(new_instrs);
+        }
+
+        // Build set of old labels for fast lookup (includes "conclusion")
+        std::set<std::string> internal_labels(orig_labels.begin(),
+                                               orig_labels.end());
+        internal_labels.insert("conclusion");
+
+        // Rename all label references in jumps
+        // invariant: all blocks have jump refs updated
+        for (auto &[label, blk] : new_def.blocks) {
+            for (auto &instr : blk.instrs) {
+                if (auto *j = std::get_if<x86::Jmp>(&instr)) {
+                    if (internal_labels.count(j->label) > 0) {
+                        j->label = xdef.name + "_" + j->label;
+                    }
+                } else if (auto *jc = std::get_if<x86::JmpIf>(&instr)) {
+                    if (internal_labels.count(jc->label) > 0) {
+                        jc->label = xdef.name + "_" + jc->label;
+                    }
+                }
+            }
+        }
+
+        // Function conclusion
+        x86::Block func_conclusion;
+        if (xdef.stack_space > 0) {
+            func_conclusion.instrs.push_back(
+                x86::Addq{x86::Imm{xdef.stack_space},
+                           x86::RegArg{x86::Reg::Rsp}});
+        }
+        // invariant: fn_callee[i+1..n) popped
+        for (auto i = static_cast<int64_t>(fn_callee.size()) - 1;
+             i >= 0; --i) {
+            func_conclusion.instrs.push_back(
+                x86::Popq{x86::RegArg{
+                    fn_callee[static_cast<size_t>(i)]}});
+        }
+        func_conclusion.instrs.push_back(
+            x86::Popq{x86::RegArg{x86::Reg::Rbp}});
+        func_conclusion.instrs.push_back(x86::Retq{});
+        new_def.blocks[xdef.name + "_conclusion"] =
+            std::move(func_conclusion);
+
+        result.defs.push_back(std::move(new_def));
+    }
+
     return result;
 }
 

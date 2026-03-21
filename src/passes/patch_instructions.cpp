@@ -106,6 +106,25 @@ x86::X86Program patch_instructions(const x86::X86Program &prog) {
         }
         result.blocks[label] = x86::Block{std::move(patched)};
     }
+
+    // Process each function def
+    // invariant: result.defs has patched defs for prog.defs[0..i)
+    for (const auto &xdef : prog.defs) {
+        x86::X86FunctionDef new_def;
+        new_def.name = xdef.name;
+        new_def.stack_space = xdef.stack_space;
+        new_def.root_stack_space = xdef.root_stack_space;
+        new_def.used_callee_saved = xdef.used_callee_saved;
+        new_def.var_types = xdef.var_types;
+        for (const auto &[label, blk] : xdef.blocks) {
+            std::vector<x86::Instr> patched;
+            for (const auto &instr : blk.instrs) {
+                patch_one(instr, patched);
+            }
+            new_def.blocks[label] = x86::Block{std::move(patched)};
+        }
+        result.defs.push_back(std::move(new_def));
+    }
     return result;
 }
 

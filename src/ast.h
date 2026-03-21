@@ -17,7 +17,8 @@ enum class NodeKind {
   Int, Bool, Var, Read, Unary, Binary, If, Let,
   While, SetBang, Begin, Void, Get,
   Vector, VectorRef, VectorSet, VectorLength,
-  Allocate, Collect, GlobalValue
+  Allocate, Collect, GlobalValue,
+  Apply, FunRef
 };
 
 /// Base class for all expressions in L_While.
@@ -241,6 +242,39 @@ public:
   std::string dump() const override;
 };
 
+/// @brief Function application: f(e1, e2, ...)
+class ApplyExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Apply;
+  std::unique_ptr<Expr> func;
+  std::vector<std::unique_ptr<Expr>> args;
+  ApplyExpr(std::unique_ptr<Expr> f, std::vector<std::unique_ptr<Expr>> a)
+      : func(std::move(f)), args(std::move(a)) {}
+  NodeKind kind() const override { return NodeKind::Apply; }
+  std::string dump() const override;
+};
+
+/// @brief Function reference (introduced by reveal_functions)
+class FunRefExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::FunRef;
+  std::string name;
+  int64_t arity;
+  explicit FunRefExpr(std::string n, int64_t a)
+      : name(std::move(n)), arity(a) {}
+  NodeKind kind() const override { return NodeKind::FunRef; }
+  std::string dump() const override;
+};
+
+/// @brief Top-level function definition
+struct DefNode {
+  std::string name;
+  std::vector<std::pair<std::string, TypePtr>> params;
+  TypePtr ret_type;
+  std::unique_ptr<Expr> body;
+  std::string dump() const;
+};
+
 template <typename T>
 const T *expr_cast(const Expr *e) {
     assert(e && e->kind() == T::expected_kind);
@@ -256,7 +290,10 @@ T *expr_cast(Expr *e) {
 class Program {
 public:
   std::unique_ptr<Expr> body;
+  std::vector<DefNode> defs;
   explicit Program(std::unique_ptr<Expr> b) : body(std::move(b)) {}
+  Program(std::vector<DefNode> d, std::unique_ptr<Expr> b)
+      : body(std::move(b)), defs(std::move(d)) {}
   std::string dump() const;
 };
 

@@ -109,6 +109,16 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
         auto *gv = expr_cast<GlobalValueExpr>(e);
         return cir::CGlobalValueExpr{gv->name};
     }
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        return cir::CFunRefExpr{fr->name, fr->arity};
+    }
+    case NodeKind::Apply: {
+        auto *ae = expr_cast<ApplyExpr>(e);
+        std::vector<cir::Atom> args;
+        for (const auto &a : ae->args) args.push_back(make_atom(a.get()));
+        return cir::CCallExpr{make_atom(ae->func.get()), std::move(args)};
+    }
     default:
         return cir::AtomExpr{cir::IntAtom{0}};
     }
@@ -210,7 +220,7 @@ void emit_begin_effects(
 /// @ensures new blocks emitted or work items pushed
 void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
                       std::map<std::string, cir::BasicBlock> &blocks,
-                      int &lc) {
+                      int &lc, bool allow_tail_calls = false) {
     auto stmts = std::move(tw.stmts);
     const Expr *cur = tw.expr;
     peel_lets(cur, stmts);
@@ -268,6 +278,20 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
             wl.push_back(TailWork{cl, std::move(cs), last});
         } else {
             blocks[cl] = {std::move(cs), cir::Return{expr_to_cexpr(last)}};
+        }
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ae = expr_cast<ApplyExpr>(cur);
+        std::vector<cir::Atom> args;
+        for (const auto &a : ae->args) args.push_back(make_atom(a.get()));
+        if (allow_tail_calls) {
+            blocks[tw.block_label] = {std::move(stmts),
+                cir::TailCall{make_atom(ae->func.get()), std::move(args)}};
+        } else {
+            blocks[tw.block_label] = {std::move(stmts),
+                cir::Return{cir::CCallExpr{make_atom(ae->func.get()),
+                                            std::move(args)}}};
         }
         break;
     }
@@ -498,13 +522,13 @@ void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
 /// @ensures blocks populated with all generated basic blocks
 void process_work(std::vector<Work> &worklist,
                   std::map<std::string, cir::BasicBlock> &blocks,
-                  int &lc) {
+                  int &lc, bool allow_tail_calls = false) {
     // decreases: worklist.size() + complexity of remaining exprs
     while (!worklist.empty()) {
         auto work = std::move(worklist.back());
         worklist.pop_back();
         if (auto *tw = std::get_if<TailWork>(&work)) {
-            handle_tail_work(*tw, worklist, blocks, lc);
+            handle_tail_work(*tw, worklist, blocks, lc, allow_tail_calls);
         } else if (auto *pw = std::get_if<PredWork>(&work)) {
             handle_pred_work(*pw, worklist, blocks, lc);
         } else if (auto *aw = std::get_if<AssignWork>(&work)) {
@@ -522,13 +546,28 @@ void process_work(std::vector<Work> &worklist,
 /// @ensures result.blocks has "start" block; tails are Goto/IfStmt/Return
 cir::CProgram explicate_control(const Program &prog) {
     int label_counter = 0;
-    std::map<std::string, cir::BasicBlock> blocks;
+    cir::CProgram result;
+
+    // Process each function def
+    // invariant: result.defs has CFGs for defs[0..i)
+    for (const auto &def : prog.defs) {
+        std::map<std::string, cir::BasicBlock> blocks;
+        std::vector<Work> worklist;
+        worklist.push_back(TailWork{"start", {}, def.body.get()});
+        process_work(worklist, blocks, label_counter, true);
+        cir::CFunctionDef cdef;
+        cdef.name = def.name;
+        for (const auto &p : def.params) cdef.params.push_back(p.first);
+        cdef.blocks = std::move(blocks);
+        result.defs.push_back(std::move(cdef));
+    }
+
+    // Process main body
     std::vector<Work> worklist;
-
     worklist.push_back(TailWork{"start", {}, prog.body.get()});
-    process_work(worklist, blocks, label_counter);
+    process_work(worklist, result.blocks, label_counter);
 
-    return cir::CProgram{std::move(blocks)};
+    return result;
 }
 
 } // namespace mc

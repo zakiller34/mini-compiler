@@ -24,7 +24,7 @@ class ParseError : public std::runtime_error {
 ///   cmp_expr → additive ((EQ|LT|LE|GT|GE) additive)?
 ///   additive → additive (+|-) unary | unary
 ///   unary    → NOT unary | '-' unary | primary
-///   primary  → INT | IDENT | TRUE | FALSE | READ '(' ')'
+///   primary  → INT | IDENT ('(' args ')')? | TRUE | FALSE | READ '(' ')'
 ///            | IF '(' expr ')' '{' expr '}' ELSE '{' expr '}'
 ///            | WHILE '(' expr ')' '{' expr '}'
 ///            | BEGIN '{' expr (';' expr)* '}'
@@ -34,6 +34,11 @@ class ParseError : public std::runtime_error {
 ///            | VOID
 ///            | '(' expr ')'
 /// postfix    → primary ('[' INT ']' ('=' expr)? )*
+///   program  → def* expr EOF
+///   def      → FN IDENT '(' params ')' ':' type '{' expr '}'
+///   params   → (IDENT ':' type (',' IDENT ':' type)*)?
+///   type     → INT_KW | BOOL_KW | VOID | '(' types ')' '->' type
+///   args     → (expr (',' expr)*)?
 class Parser {
   public:
     explicit Parser(Lexer &lex);
@@ -54,6 +59,8 @@ class Parser {
     std::unique_ptr<Expr> parse_unary();
     std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
+    TypePtr parse_type();
+    DefNode parse_def();
 };
 
 } // namespace mc

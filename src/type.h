@@ -6,7 +6,7 @@
 
 namespace mc {
 
-enum class TypeKind { Int, Bool, Void, Vector };
+enum class TypeKind { Int, Bool, Void, Vector, Function };
 
 struct Type;
 using TypePtr = std::shared_ptr<Type>;
@@ -30,5 +30,11 @@ TypePtr vector_type(std::vector<TypePtr> elems);
 
 /// @brief Check if type is a vector type
 bool is_vector_type(const TypePtr &t);
+
+/// @brief Function type factory: (param_types...) -> ret_type
+TypePtr fun_type(std::vector<TypePtr> params, TypePtr ret);
+
+/// @brief Check if type is a function type
+bool is_fun_type(const TypePtr &t);
 
 } // namespace mc

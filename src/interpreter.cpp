@@ -1,5 +1,6 @@
 #include "interpreter.h"
 
+#include <algorithm>
 #include <istream>
 #include <map>
 #include <string>
@@ -28,6 +29,13 @@ struct VectorRefVecFrame { int64_t index; };
 struct VectorSetVecFrame { int64_t index; const Expr *val; };
 struct VectorSetValFrame { int64_t index; };
 struct VectorLengthVecFrame {};
+struct ApplyFuncFrame {
+    size_t total_args;
+    std::vector<const Expr *> remaining;
+};
+struct ApplyArgsFrame {
+    size_t total_args;
+};
 
 using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            BinLhsFrame, BinRhsFrame, IfCondFrame,
@@ -35,7 +43,8 @@ using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            SetBangFrame, BeginFrame,
                            VectorBuildFrame, VectorRefVecFrame,
                            VectorSetVecFrame, VectorSetValFrame,
-                           VectorLengthVecFrame>;
+                           VectorLengthVecFrame,
+                           ApplyFuncFrame, ApplyArgsFrame>;
 
 /// @brief Get int64_t from Value or throw
 int64_t as_int(const Value &v) { return std::get<int64_t>(v); }
@@ -45,6 +54,19 @@ bool as_bool(const Value &v) { return std::get<bool>(v); }
 
 /// @brief Get tuple from Value or throw
 Tuple as_tuple(const Value &v) { return std::get<Tuple>(v); }
+
+/// @brief Pointer to program defs for function lookup
+const std::vector<DefNode> *g_defs = nullptr;
+
+/// @brief Find def by name
+/// @ensures returns pointer to DefNode or nullptr
+const DefNode *find_def(const std::string &name) {
+    // invariant: checked defs[0..i)
+    for (const auto &def : *g_defs) {
+        if (def.name == name) return &def;
+    }
+    return nullptr;
+}
 
 /// @brief Evaluate leaf or push continuation frames
 /// @requires e != nullptr
@@ -165,6 +187,21 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
         // These are compiler-internal nodes, not interpreted
         values.push_back(std::monostate{});
         break;
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        values.push_back(FunctionValue{fr->name, fr->arity});
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ae = expr_cast<ApplyExpr>(e);
+        std::vector<const Expr *> remaining;
+        for (size_t i = 0; i < ae->args.size(); ++i) {
+            remaining.push_back(ae->args[i].get());
+        }
+        stack.push_back(ApplyFuncFrame{ae->args.size(), std::move(remaining)});
+        stack.push_back(EvalFrame{ae->func.get()});
+        break;
+    }
     }
 }
 
@@ -289,6 +326,43 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         Value vec_val = values.back(); values.pop_back();
         auto tup = as_tuple(vec_val);
         values.push_back(static_cast<int64_t>(tup->elems.size()));
+    } else if (auto *af = std::get_if<ApplyFuncFrame>(&frame)) {
+        if (af->remaining.empty()) {
+            // func val on stack, no args — dispatch immediately
+            stack.push_back(ApplyArgsFrame{af->total_args});
+        } else {
+            const Expr *next = af->remaining[0];
+            std::vector<const Expr *> rest(af->remaining.begin() + 1,
+                                            af->remaining.end());
+            stack.push_back(ApplyFuncFrame{af->total_args, std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
+    } else if (auto *aa = std::get_if<ApplyArgsFrame>(&frame)) {
+        // Stack: func_val, arg0, ..., argN (top)
+        std::vector<Value> args;
+        for (size_t i = 0; i < aa->total_args; ++i) {
+            args.push_back(values.back());
+            values.pop_back();
+        }
+        std::reverse(args.begin(), args.end());
+        Value func_val = values.back(); values.pop_back();
+        // func_val is either FunctionValue or VarExpr looked up
+        FunctionValue fv;
+        if (auto *f = std::get_if<FunctionValue>(&func_val)) {
+            fv = *f;
+        } else {
+            throw std::runtime_error("apply: not a function");
+        }
+        const DefNode *def = find_def(fv.name);
+        if (def == nullptr) {
+            throw std::runtime_error("apply: unknown function " + fv.name);
+        }
+        // Bind params -> args in env
+        // invariant: params[0..i) bound
+        for (size_t i = 0; i < def->params.size(); ++i) {
+            env[def->params[i].first] = args[i];
+        }
+        stack.push_back(EvalFrame{def->body.get()});
     }
 }
 
@@ -301,6 +375,13 @@ Value interpret(const Program &prog, std::istream &in) {
     std::vector<Frame> stack;
     std::vector<Value> values;
     Env env;
+    g_defs = &prog.defs;
+    // Bind function names in env
+    // invariant: env has function values for defs[0..i)
+    for (const auto &def : prog.defs) {
+        env[def.name] = FunctionValue{def.name,
+                                       static_cast<int64_t>(def.params.size())};
+    }
     stack.push_back(EvalFrame{prog.body.get()});
 
     // decreases: termination relies on program termination

@@ -90,8 +90,16 @@ std::set<std::string> collect_mutable_vars(const Expr *root) {
             worklist.push_back(
                 expr_cast<VectorLengthExpr>(e)->vec.get());
             break;
+        case NodeKind::Apply: {
+            auto *ap = expr_cast<ApplyExpr>(e);
+            worklist.push_back(ap->func.get());
+            for (const auto &arg : ap->args) {
+                worklist.push_back(arg.get());
+            }
+            break;
+        }
         default:
-            break; // Int, Bool, Var, Read, Void, Get, Allocate, etc.: no children
+            break; // Int, Bool, Var, Read, Void, Get, FunRef, Allocate, etc.: no children
         }
     }
     return result;
@@ -117,6 +125,7 @@ struct VectorRefBuild { int64_t index; };
 struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
+struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -125,7 +134,7 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild>;
+                           VectorLengthBuild, ApplyBuild>;
 
 /// @brief Evaluate leaf or push continuation frames for uncover_get
 /// @requires ef.expr != nullptr
@@ -239,6 +248,23 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         stack.push_back(EvalFrame{vl->vec.get()});
         break;
     }
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        results.push_back(
+            std::make_unique<FunRefExpr>(fr->name, fr->arity));
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ap = expr_cast<ApplyExpr>(e);
+        size_t total = 1 + ap->args.size();
+        std::vector<const Expr *> remaining;
+        for (size_t i = 0; i < ap->args.size(); ++i) {
+            remaining.push_back(ap->args[i].get());
+        }
+        stack.push_back(ApplyBuild{total, std::move(remaining)});
+        stack.push_back(EvalFrame{ap->func.get()});
+        break;
+    }
     case NodeKind::Allocate:
     case NodeKind::Collect:
     case NodeKind::GlobalValue:
@@ -343,7 +369,48 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
     } else if (std::get_if<VectorLengthBuild>(&frame) != nullptr) {
         auto vec = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<VectorLengthExpr>(std::move(vec)));
+    } else if (auto *ab = std::get_if<ApplyBuild>(&frame)) {
+        if (ab->remaining.empty()) {
+            size_t num_args = ab->total - 1;
+            std::vector<std::unique_ptr<Expr>> args;
+            for (size_t i = 0; i < num_args; ++i) {
+                args.push_back(std::move(results.back()));
+                results.pop_back();
+            }
+            std::reverse(args.begin(), args.end());
+            auto func = std::move(results.back()); results.pop_back();
+            results.push_back(std::make_unique<ApplyExpr>(
+                std::move(func), std::move(args)));
+        } else {
+            const Expr *next = ab->remaining[0];
+            std::vector<const Expr *> rest(ab->remaining.begin() + 1,
+                                            ab->remaining.end());
+            stack.push_back(ApplyBuild{ab->total, std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
     }
+}
+
+/// @brief Process a single expression through uncover_get
+/// @requires root != nullptr
+/// @ensures Var(v)->Get(v) for mutable v
+std::unique_ptr<Expr> uncover_get_expr(const Expr *root,
+                                        const std::set<std::string> &mvars) {
+    std::vector<Frame> stack;
+    std::vector<std::unique_ptr<Expr>> results;
+    stack.push_back(EvalFrame{root});
+
+    // decreases: stack.size()
+    while (!stack.empty()) {
+        auto frame = std::move(stack.back());
+        stack.pop_back();
+        if (auto *ef = std::get_if<EvalFrame>(&frame)) {
+            push_eval(*ef, mvars, stack, results);
+        } else {
+            process_cont(frame, stack, results);
+        }
+    }
+    return std::move(results.back());
 }
 
 } // namespace
@@ -352,23 +419,22 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 /// @requires prog.body != nullptr
 /// @ensures result structurally identical except Var(v)->Get(v) for mutable v
 std::unique_ptr<Program> uncover_get(const Program &prog) {
+    // Collect mutable vars from all defs and main body
     auto mutable_vars = collect_mutable_vars(prog.body.get());
-
-    std::vector<Frame> stack;
-    std::vector<std::unique_ptr<Expr>> results;
-    stack.push_back(EvalFrame{prog.body.get()});
-
-    // decreases: stack.size()
-    while (!stack.empty()) {
-        auto frame = std::move(stack.back());
-        stack.pop_back();
-        if (auto *ef = std::get_if<EvalFrame>(&frame)) {
-            push_eval(*ef, mutable_vars, stack, results);
-        } else {
-            process_cont(frame, stack, results);
-        }
+    for (const auto &def : prog.defs) {
+        auto def_mvars = collect_mutable_vars(def.body.get());
+        mutable_vars.insert(def_mvars.begin(), def_mvars.end());
     }
-    return std::make_unique<Program>(std::move(results.back()));
+
+    std::vector<DefNode> new_defs;
+    // invariant: new_defs[0..i) processed
+    for (const auto &def : prog.defs) {
+        auto new_body = uncover_get_expr(def.body.get(), mutable_vars);
+        new_defs.push_back(DefNode{def.name, def.params, def.ret_type,
+                                    std::move(new_body)});
+    }
+    auto new_body = uncover_get_expr(prog.body.get(), mutable_vars);
+    return std::make_unique<Program>(std::move(new_defs), std::move(new_body));
 }
 
 } // namespace mc

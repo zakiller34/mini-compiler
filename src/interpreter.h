@@ -13,7 +13,16 @@ namespace mc {
 struct TupleData;
 using Tuple = std::shared_ptr<TupleData>;
 
-using Value = std::variant<int64_t, bool, std::monostate, Tuple>;
+/// Function value (just a name reference into defs)
+struct FunctionValue {
+    std::string name;
+    int64_t arity;
+    bool operator==(const FunctionValue &o) const {
+        return name == o.name && arity == o.arity;
+    }
+};
+
+using Value = std::variant<int64_t, bool, std::monostate, Tuple, FunctionValue>;
 
 struct TupleData {
     std::vector<Value> elems;

@@ -44,6 +44,10 @@ std::set<std::string> instr_reads(const x86::Instr &instr) {
         var_from_arg(sq->src, result); var_from_arg(sq->dst, result);
     } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
         var_from_arg(lq->src, result);
+    } else if (const auto *ic = std::get_if<x86::IndirectCallq>(&instr)) {
+        var_from_arg(ic->func, result);
+    } else if (const auto *tj = std::get_if<x86::TailJmp>(&instr)) {
+        var_from_arg(tj->func, result);
     }
     // SetCC, JmpIf, Jmp, Callq, Retq, Popq: no var reads
     return result;

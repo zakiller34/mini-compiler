@@ -40,6 +40,7 @@ struct VectorRefBuild { int64_t index; };
 struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
+struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -48,7 +49,7 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild>;
+                           VectorLengthBuild, ApplyBuild>;
 
 /// @brief Infer the type of a vector literal for Allocate node
 /// @requires elems non-empty; elements already expose-allocated
@@ -171,6 +172,23 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         auto *vl = expr_cast<VectorLengthExpr>(e);
         stack.push_back(VectorLengthBuild{});
         stack.push_back(EvalFrame{vl->vec.get()});
+        break;
+    }
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        results.push_back(
+            std::make_unique<FunRefExpr>(fr->name, fr->arity));
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ap = expr_cast<ApplyExpr>(e);
+        size_t total = 1 + ap->args.size();
+        std::vector<const Expr *> remaining;
+        for (size_t i = 0; i < ap->args.size(); ++i) {
+            remaining.push_back(ap->args[i].get());
+        }
+        stack.push_back(ApplyBuild{total, std::move(remaining)});
+        stack.push_back(EvalFrame{ap->func.get()});
         break;
     }
     case NodeKind::Allocate:
@@ -338,16 +356,34 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
     } else if (std::get_if<VectorLengthBuild>(&frame) != nullptr) {
         auto vec = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<VectorLengthExpr>(std::move(vec)));
+    } else if (auto *ab = std::get_if<ApplyBuild>(&frame)) {
+        if (ab->remaining.empty()) {
+            size_t num_args = ab->total - 1;
+            std::vector<std::unique_ptr<Expr>> args;
+            for (size_t i = 0; i < num_args; ++i) {
+                args.push_back(std::move(results.back()));
+                results.pop_back();
+            }
+            std::reverse(args.begin(), args.end());
+            auto func = std::move(results.back()); results.pop_back();
+            results.push_back(std::make_unique<ApplyExpr>(
+                std::move(func), std::move(args)));
+        } else {
+            const Expr *next = ab->remaining[0];
+            std::vector<const Expr *> rest(ab->remaining.begin() + 1,
+                                            ab->remaining.end());
+            stack.push_back(ApplyBuild{ab->total, std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
     }
 }
 
-} // namespace
-
-std::unique_ptr<Program> expose_allocation(const Program &prog) {
-    int tmp_counter = 0;
+/// @brief Process a single expression through expose_allocation
+/// @requires root != nullptr
+std::unique_ptr<Expr> expose_alloc_expr(const Expr *root, int &tmp_counter) {
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
-    stack.push_back(EvalFrame{prog.body.get()});
+    stack.push_back(EvalFrame{root});
 
     // decreases: stack.size()
     while (!stack.empty()) {
@@ -359,7 +395,22 @@ std::unique_ptr<Program> expose_allocation(const Program &prog) {
             process_cont(frame, stack, results, tmp_counter);
         }
     }
-    return std::make_unique<Program>(std::move(results.back()));
+    return std::move(results.back());
+}
+
+} // namespace
+
+std::unique_ptr<Program> expose_allocation(const Program &prog) {
+    int tmp_counter = 0;
+    std::vector<DefNode> new_defs;
+    // invariant: new_defs[0..i) processed
+    for (const auto &def : prog.defs) {
+        auto new_body = expose_alloc_expr(def.body.get(), tmp_counter);
+        new_defs.push_back(DefNode{def.name, def.params, def.ret_type,
+                                    std::move(new_body)});
+    }
+    auto new_body = expose_alloc_expr(prog.body.get(), tmp_counter);
+    return std::make_unique<Program>(std::move(new_defs), std::move(new_body));
 }
 
 } // namespace mc

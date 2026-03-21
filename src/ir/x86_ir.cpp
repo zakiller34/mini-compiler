@@ -90,6 +90,10 @@ std::string dump_instr(const Instr &i) {
         return "    sarq " + dump_arg(sq->src) + ", " + dump_arg(sq->dst);
     if (const auto *lq = std::get_if<Leaq>(&i))
         return "    leaq " + dump_arg(lq->src) + ", " + dump_arg(lq->dst);
+    if (const auto *ic = std::get_if<IndirectCallq>(&i))
+        return "    callq *" + dump_arg(ic->func);
+    if (const auto *tj = std::get_if<TailJmp>(&i))
+        return "    jmp *" + dump_arg(tj->func);
     return "    jmp " + std::get<Jmp>(i).label;
 }
 

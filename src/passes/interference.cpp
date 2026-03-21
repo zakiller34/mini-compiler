@@ -100,8 +100,9 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                     graph.add_move_edge(src_loc, dst_loc);
                 }
             }
-        } else if (std::holds_alternative<x86::Callq>(instr)) {
-            // Callq clobbers caller-saved regs: add edges with all live vars
+        } else if (std::holds_alternative<x86::Callq>(instr) ||
+                   std::holds_alternative<x86::IndirectCallq>(instr)) {
+            // Callq/IndirectCallq clobber caller-saved regs
             for (const auto &v : live) {
                 Location v_loc{v};
                 for (auto reg : caller_saved_regs()) {

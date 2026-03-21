@@ -48,7 +48,11 @@ Token Lexer::next() {
     // Multi-char and single-char tokens
     switch (cur_) {
     case '+': advance(); return {TokenKind::Plus, "+", 0};
-    case '-': advance(); return {TokenKind::Minus, "-", 0};
+    case '-':
+        advance();
+        if (cur_ == '>') { advance(); return {TokenKind::Arrow, "->", 0}; }
+        return {TokenKind::Minus, "-", 0};
+    case ':': advance(); return {TokenKind::Colon, ":", 0};
     case '(': advance(); return {TokenKind::LParen, "(", 0};
     case ')': advance(); return {TokenKind::RParen, ")", 0};
     case '{': advance(); return {TokenKind::LBrace, "{", 0};
@@ -110,6 +114,9 @@ Token Lexer::next() {
         if (id == "set") { return {TokenKind::Set, id, 0}; }
         if (id == "vector") { return {TokenKind::VectorKw, id, 0}; }
         if (id == "length") { return {TokenKind::Length, id, 0}; }
+        if (id == "fn") { return {TokenKind::Fn, id, 0}; }
+        if (id == "Int") { return {TokenKind::Int_kw, id, 0}; }
+        if (id == "Bool") { return {TokenKind::Bool_kw, id, 0}; }
         return {TokenKind::Ident, id, 0};
     }
 

@@ -60,6 +60,10 @@ std::string emit_instr(const x86::Instr &i) {
         return "    sarq " + emit_arg(sq->src) + ", " + emit_arg(sq->dst);
     if (const auto *lq = std::get_if<x86::Leaq>(&i))
         return "    leaq " + emit_arg(lq->src) + ", " + emit_arg(lq->dst);
+    if (const auto *ic = std::get_if<x86::IndirectCallq>(&i))
+        return "    callq *" + emit_arg(ic->func);
+    if (const auto *tj = std::get_if<x86::TailJmp>(&i))
+        return "    jmp *" + emit_arg(tj->func);
     return "    jmp " + std::get<x86::Jmp>(i).label;
 }
 
@@ -78,6 +82,33 @@ std::string emit_block(const std::string &label, const x86::Block &blk) {
 /// @ensures result is complete x86-64 AT&T assembly
 std::string emit(const x86::X86Program &prog) {
     std::string result = "    .globl main\n";
+
+    // Emit function defs before main
+    // invariant: result has assembly for defs[0..i)
+    for (const auto &def : prog.defs) {
+        // Entry point label
+        auto eit = def.blocks.find(def.name);
+        if (eit != def.blocks.end()) {
+            result += emit_block(def.name, eit->second);
+        }
+        // Other blocks (sorted), skip entry and conclusion
+        std::string concl = def.name + "_conclusion";
+        std::vector<std::string> dlabels;
+        for (const auto &[label, blk] : def.blocks) {
+            if (label != def.name && label != concl) {
+                dlabels.push_back(label);
+            }
+        }
+        std::sort(dlabels.begin(), dlabels.end());
+        for (const auto &label : dlabels) {
+            result += emit_block(label, def.blocks.at(label));
+        }
+        // Conclusion last
+        auto cit = def.blocks.find(concl);
+        if (cit != def.blocks.end()) {
+            result += emit_block(concl, cit->second);
+        }
+    }
 
     // Emit main first
     auto it = prog.blocks.find("main");

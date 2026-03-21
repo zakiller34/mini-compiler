@@ -10,9 +10,11 @@
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
 #include "passes/expose_allocation.h"
+#include "passes/limit_functions.h"
 #include "passes/patch_instructions.h"
 #include "passes/prelude_conclusion.h"
 #include "passes/rco.h"
+#include "passes/reveal_functions.h"
 #include "passes/select_instructions.h"
 #include "passes/uncover_get.h"
 #include "passes/uniquify.h"
@@ -21,10 +23,14 @@
 using namespace mc;
 
 /// Run full pipeline: AST -> assembly string.
-static std::string run_pipeline(std::unique_ptr<Expr> body) {
-  Program prog(std::move(body));
+static std::string run_pipeline(std::unique_ptr<Expr> body,
+                                std::vector<DefNode> defs = {}) {
+  Program prog(std::move(defs), std::move(body));
   auto s0__ = shrink(prog); auto u = uniquify(*s0__);
-  auto ug = uncover_get(*u);
+  auto rf = reveal_functions(*u);
+  auto lf = limit_functions(*rf);
+  const auto &lf_ref = lf ? *lf : *rf;
+  auto ug = uncover_get(lf_ref);
   auto ea = expose_allocation(*ug);
   auto r = remove_complex_operands(*ea);
   auto c = explicate_control(*r);

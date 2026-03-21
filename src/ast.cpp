@@ -192,6 +192,22 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     out += "(global-value " + gv->name + ")";
     break;
   }
+  case NodeKind::Apply: {
+    auto *ae = expr_cast<ApplyExpr>(e);
+    out += "(apply ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    for (int i = static_cast<int>(ae->args.size()) - 1; i >= 0; --i) {
+      tasks.push_back({Action::Visit, ae->args[i].get(), ""});
+      tasks.push_back({Action::Append, nullptr, " "});
+    }
+    tasks.push_back({Action::Visit, ae->func.get(), ""});
+    break;
+  }
+  case NodeKind::FunRef: {
+    auto *fr = expr_cast<FunRefExpr>(e);
+    out += "(fun-ref " + fr->name + " " + std::to_string(fr->arity) + ")";
+    break;
+  }
   }
 }
 
@@ -260,10 +276,32 @@ std::string CollectExpr::dump() const { return dump_iterative(this); }
 
 std::string GlobalValueExpr::dump() const { return dump_iterative(this); }
 
+std::string ApplyExpr::dump() const { return dump_iterative(this); }
+
+std::string FunRefExpr::dump() const { return dump_iterative(this); }
+
+std::string DefNode::dump() const {
+  std::string result = "(def " + name + " (";
+  // invariant: result has params[0..i) dumped
+  for (size_t i = 0; i < params.size(); ++i) {
+    if (i > 0) result += " ";
+    result += "[" + params[i].first + " : " + params[i].second->dump() + "]";
+  }
+  result += ") : " + ret_type->dump() + " ";
+  result += dump_iterative(body.get()) + ")";
+  return result;
+}
+
 /// @brief Dump program as S-expr: (program body)
 /// @requires body != nullptr
 std::string Program::dump() const {
-  return "(program " + dump_iterative(body.get()) + ")";
+  std::string result;
+  // invariant: result has defs[0..i) dumped
+  for (const auto &def : defs) {
+    result += def.dump() + "\n";
+  }
+  result += "(program " + dump_iterative(body.get()) + ")";
+  return result;
 }
 
 } // namespace mc

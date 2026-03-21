@@ -55,6 +55,10 @@ x86::Instr replace_instr(const x86::Instr &instr,
         return x86::Sarq{replace_arg(sq->src, homes), replace_arg(sq->dst, homes)};
     if (const auto *lq = std::get_if<x86::Leaq>(&instr))
         return x86::Leaq{replace_arg(lq->src, homes), replace_arg(lq->dst, homes)};
+    if (const auto *ic = std::get_if<x86::IndirectCallq>(&instr))
+        return x86::IndirectCallq{replace_arg(ic->func, homes), ic->arity};
+    if (const auto *tj = std::get_if<x86::TailJmp>(&instr))
+        return x86::TailJmp{replace_arg(tj->func, homes), tj->arity};
     return instr;
 }
 
@@ -91,6 +95,10 @@ void collect_vars_instr(const x86::Instr &instr, std::set<std::string> &vars) {
         collect_var_from_arg(sq->src, vars); collect_var_from_arg(sq->dst, vars);
     } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
         collect_var_from_arg(lq->src, vars); collect_var_from_arg(lq->dst, vars);
+    } else if (const auto *ic = std::get_if<x86::IndirectCallq>(&instr)) {
+        collect_var_from_arg(ic->func, vars);
+    } else if (const auto *tj = std::get_if<x86::TailJmp>(&instr)) {
+        collect_var_from_arg(tj->func, vars);
     }
 }
 
@@ -186,6 +194,23 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
             out_blk.instrs.push_back(replace_instr(instr, homes));
         }
         result.blocks[label] = std::move(out_blk);
+    }
+
+    // Process each function def independently
+    // invariant: result.defs has assigned defs for prog.defs[0..i)
+    for (const auto &xdef : prog.defs) {
+        x86::X86Program tmp;
+        tmp.blocks = xdef.blocks;
+        tmp.var_types = xdef.var_types;
+        auto assigned = assign_homes(tmp);
+        x86::X86FunctionDef new_def;
+        new_def.name = xdef.name;
+        new_def.blocks = std::move(assigned.blocks);
+        new_def.stack_space = assigned.stack_space;
+        new_def.root_stack_space = assigned.root_stack_space;
+        new_def.used_callee_saved = assigned.used_callee_saved;
+        new_def.var_types = assigned.var_types;
+        result.defs.push_back(std::move(new_def));
     }
     return result;
 }

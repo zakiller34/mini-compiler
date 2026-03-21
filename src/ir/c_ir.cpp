@@ -69,6 +69,14 @@ std::string dump_cexpr(const CExpr &e) {
     if (const auto *ce = std::get_if<CCollectExpr>(&e)) {
         return "(collect " + std::to_string(ce->bytes) + ")";
     }
+    if (const auto *fr = std::get_if<CFunRefExpr>(&e)) {
+        return "(fun-ref " + fr->name + " " + std::to_string(fr->arity) + ")";
+    }
+    if (const auto *ca = std::get_if<CCallExpr>(&e)) {
+        std::string r = "(call " + dump_atom(ca->func);
+        for (const auto &a : ca->args) r += " " + dump_atom(a);
+        return r + ")";
+    }
     return "?";
 }
 
@@ -78,6 +86,11 @@ std::string dump_tail(const Tail &t) {
     }
     if (const auto *g = std::get_if<Goto>(&t)) {
         return "(goto " + g->label + ")";
+    }
+    if (const auto *tc = std::get_if<TailCall>(&t)) {
+        std::string r = "(tail-call " + dump_atom(tc->func);
+        for (const auto &a : tc->args) r += " " + dump_atom(a);
+        return r + ")";
     }
     const auto &is = std::get<IfStmt>(t);
     return std::string("(if (") + cmp_op_name(is.op) + " " +

@@ -75,6 +75,11 @@ struct VectorRefFrame { int64_t index; };
 struct VectorSetVecFrame { int64_t index; const Expr *val; TypeEnv env; };
 struct VectorSetValFrame { int64_t index; };
 struct VectorLengthFrame {};
+struct ApplyBuildFrame {
+    size_t total_args;
+    std::vector<const Expr *> remaining;
+    TypeEnv env;
+};
 
 using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            IfCondFrame, IfThenFrame, IfElseFrame,
@@ -83,7 +88,7 @@ using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            SetBangFrame, BeginFrame,
                            VectorBuildFrame, VectorRefFrame,
                            VectorSetVecFrame, VectorSetValFrame,
-                           VectorLengthFrame>;
+                           VectorLengthFrame, ApplyBuildFrame>;
 
 /// @brief Push eval for type checking
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
@@ -220,6 +225,27 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     case NodeKind::GlobalValue:
         types.push_back(int_type());
         break;
+    case NodeKind::FunRef: {
+        auto *fr = expr_cast<FunRefExpr>(e);
+        auto it = env.find(fr->name);
+        if (it == env.end()) {
+            throw TypeError("unbound function: " + fr->name);
+        }
+        types.push_back(it->second);
+        break;
+    }
+    case NodeKind::Apply: {
+        auto *ae = expr_cast<ApplyExpr>(e);
+        // Push ApplyBuildFrame, then eval func, then eval all args
+        std::vector<const Expr *> remaining;
+        for (size_t i = 0; i < ae->args.size(); ++i) {
+            remaining.push_back(ae->args[i].get());
+        }
+        stack.push_back(ApplyBuildFrame{ae->args.size(),
+                                         std::move(remaining), env});
+        stack.push_back(EvalFrame{ae->func.get(), env});
+        break;
+    }
     }
 }
 
@@ -362,16 +388,48 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         if (!is_vector_type(vec_t))
             throw TypeError("vector-length requires Vector type");
         types.push_back(int_type());
+    } else if (auto *ab = std::get_if<ApplyBuildFrame>(&frame)) {
+        if (ab->remaining.empty()) {
+            // All arg types + func type on stack
+            // Stack: func_type, arg0_type, ..., argN_type (top)
+            std::vector<TypePtr> arg_types;
+            for (size_t i = 0; i < ab->total_args; ++i) {
+                arg_types.push_back(types.back());
+                types.pop_back();
+            }
+            std::reverse(arg_types.begin(), arg_types.end());
+            TypePtr func_t = types.back(); types.pop_back();
+            if (!is_fun_type(func_t)) {
+                throw TypeError("apply: not a function type");
+            }
+            // func_t->elem_types = [param0, ..., paramN, ret_type]
+            size_t n_params = func_t->elem_types.size() - 1;
+            if (arg_types.size() != n_params) {
+                throw TypeError("apply: wrong number of arguments");
+            }
+            // invariant: checked arg_types[0..i) match params[0..i)
+            for (size_t i = 0; i < n_params; ++i) {
+                if (*arg_types[i] != *func_t->elem_types[i]) {
+                    throw TypeError("apply: argument type mismatch");
+                }
+            }
+            types.push_back(func_t->elem_types.back());
+        } else {
+            const Expr *next = ab->remaining[0];
+            std::vector<const Expr *> rest(ab->remaining.begin() + 1,
+                                            ab->remaining.end());
+            stack.push_back(ApplyBuildFrame{ab->total_args,
+                                             std::move(rest), ab->env});
+            stack.push_back(EvalFrame{next, ab->env});
+        }
     }
 }
 
-} // namespace
-
-/// @brief Type-check program
-TypePtr type_check(const Program &prog) {
+/// @brief Run type-checking loop with given initial env
+TypePtr run_check(const Expr *expr, const TypeEnv &env) {
     std::vector<Frame> stack;
     std::vector<TypePtr> types;
-    stack.push_back(EvalFrame{prog.body.get(), {}});
+    stack.push_back(EvalFrame{expr, env});
 
     // decreases: stack.size()
     while (!stack.empty()) {
@@ -384,6 +442,43 @@ TypePtr type_check(const Program &prog) {
         }
     }
     return types.back();
+}
+
+} // namespace
+
+/// @brief Type-check program
+TypePtr type_check(const Program &prog) {
+    // Build env from all defs (supports mutual recursion)
+    std::map<std::string, TypePtr> env;
+    // invariant: env has fun types for defs[0..i)
+    for (const auto &def : prog.defs) {
+        std::vector<TypePtr> param_types;
+        for (const auto &p : def.params) {
+            param_types.push_back(p.second);
+        }
+        env[def.name] = fun_type(std::move(param_types), def.ret_type);
+    }
+
+    // Check each def body
+    // invariant: defs[0..i) type-checked
+    for (const auto &def : prog.defs) {
+        std::map<std::string, TypePtr> body_env = env;
+        for (const auto &p : def.params) {
+            body_env[p.first] = p.second;
+        }
+        auto body_t = run_check(def.body.get(), body_env);
+        if (*body_t != *def.ret_type) {
+            throw TypeError("return type mismatch in " + def.name);
+        }
+    }
+
+    return run_check(prog.body.get(), env);
+}
+
+/// @brief Type-check expression with given env
+TypePtr type_check_expr(const Expr *expr,
+                        const std::map<std::string, TypePtr> &env) {
+    return run_check(expr, env);
 }
 
 } // namespace mc
