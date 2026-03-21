@@ -18,6 +18,11 @@ def collect_mutable_vars : Expr → List String
   | .let_ _ i b => collect_mutable_vars i ++ collect_mutable_vars b
   | .while_ c b => collect_mutable_vars c ++ collect_mutable_vars b
   | .begin es => es.flatMap collect_mutable_vars
+  | .vector_ es => es.flatMap collect_mutable_vars
+  | .vectorRef v _ => collect_mutable_vars v
+  | .vectorSet v _ e => collect_mutable_vars v ++ collect_mutable_vars e
+  | .vectorLength v => collect_mutable_vars v
+  | .apply f args => collect_mutable_vars f ++ args.flatMap collect_mutable_vars
   | _ => []
 
 /-- Replace VarExpr with GetExpr for mutable variables. -/
@@ -35,6 +40,12 @@ def replace_vars (mvars : List String) : Expr → Expr
   | .begin es => .begin (es.map (replace_vars mvars))
   | .void_ => .void_
   | .get n => .get n
+  | .vector_ es => .vector_ (es.map (replace_vars mvars))
+  | .vectorRef v i => .vectorRef (replace_vars mvars v) i
+  | .vectorSet v i e => .vectorSet (replace_vars mvars v) i (replace_vars mvars e)
+  | .vectorLength v => .vectorLength (replace_vars mvars v)
+  | .apply f args => .apply (replace_vars mvars f) (args.map (replace_vars mvars))
+  | .funRef n a => .funRef n a
 
 /-- Top-level uncover_get. -/
 def uncover_get (p : Program) : Program :=

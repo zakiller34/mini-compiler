@@ -16,6 +16,8 @@ set(TEST_SOURCES
     test_type_checker
     test_shrink
     test_uncover_get
+    test_reveal_functions
+    test_limit_functions
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)

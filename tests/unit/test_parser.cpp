@@ -78,3 +78,29 @@ TEST(ParserDump, ProgramWrap) {
   auto prog = Program(std::make_unique<IntExpr>(42));
   EXPECT_EQ(prog.dump(), "(program 42)");
 }
+
+// ---- Phase 6: function AST dump tests ----
+
+TEST(ParserDump, FunRefDump) {
+    auto e = std::make_unique<FunRefExpr>("foo", 2);
+    EXPECT_EQ(e->dump(), "(fun-ref foo 2)");
+}
+
+TEST(ParserDump, ApplyDump) {
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(1));
+    args.push_back(std::make_unique<IntExpr>(2));
+    auto e = std::make_unique<ApplyExpr>(
+        std::make_unique<FunRefExpr>("add", 2), std::move(args));
+    EXPECT_EQ(e->dump(), "(apply (fun-ref add 2) 1 2)");
+}
+
+TEST(ParserDump, DefNodeDump) {
+    DefNode d;
+    d.name = "foo";
+    d.params = {{"x", int_type()}};
+    d.ret_type = int_type();
+    d.body = std::make_unique<VarExpr>("x");
+    // Check dump does not crash and produces non-empty output
+    EXPECT_FALSE(d.dump().empty());
+}

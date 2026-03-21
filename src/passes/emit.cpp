@@ -87,6 +87,8 @@ std::string emit(const x86::X86Program &prog) {
     // invariant: result has assembly for defs[0..i)
     for (const auto &def : prog.defs) {
         // Entry point label
+        result += "    .globl " + def.name + "\n";
+        result += "    .align 8\n";
         auto eit = def.blocks.find(def.name);
         if (eit != def.blocks.end()) {
             result += emit_block(def.name, eit->second);

@@ -54,6 +54,28 @@ def uniquify_expr (env : RenameEnv) (counter : Nat) : Expr → Expr × Nat
     (.begin es', c)
   | .void_ => (.void_, counter)
   | .get n => (.get (rename_lookup env n), counter)
+  | .vector_ es =>
+    let (es', c) := es.foldl (fun (acc : List Expr × Nat) e =>
+      let (e', c') := uniquify_expr env acc.2 e
+      (acc.1 ++ [e'], c')) ([], counter)
+    (.vector_ es', c)
+  | .vectorRef v i =>
+    let (v', c) := uniquify_expr env counter v
+    (.vectorRef v' i, c)
+  | .vectorSet v i e =>
+    let (v', c1) := uniquify_expr env counter v
+    let (e', c2) := uniquify_expr env c1 e
+    (.vectorSet v' i e', c2)
+  | .vectorLength v =>
+    let (v', c) := uniquify_expr env counter v
+    (.vectorLength v', c)
+  | .apply f args =>
+    let (f', c1) := uniquify_expr env counter f
+    let (args', c2) := args.foldl (fun (acc : List Expr × Nat) a =>
+      let (a', c') := uniquify_expr env acc.2 a
+      (acc.1 ++ [a'], c')) ([], c1)
+    (.apply f' args', c2)
+  | .funRef n a => (.funRef n a, counter)
 
 /-- Top-level uniquify. -/
 def uniquify (p : Program) : Program :=

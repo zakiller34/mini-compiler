@@ -68,6 +68,36 @@ def type_check_env : TypeEnv → Expr → Option Ty
       type_check_env env (.begin rest)
   | _, .void_ => some .void
   | env, .get n => lookup env n
+  | env, .vector_ es => do
+    let ts ← es.mapM (type_check_env env)
+    some (.vector ts)
+  | env, .vectorRef v i => do
+    let vt ← type_check_env env v
+    match vt with
+    | .vector ts => ts[i]?
+    | _ => none
+  | env, .vectorSet v i e => do
+    let vt ← type_check_env env v
+    let et ← type_check_env env e
+    match vt with
+    | .vector ts => do
+      let ti ← ts[i]?
+      if ti == et then some .void else none
+    | _ => none
+  | env, .vectorLength v => do
+    let vt ← type_check_env env v
+    match vt with
+    | .vector _ => some .int
+    | _ => none
+  | env, .apply f args => do
+    let ft ← type_check_env env f
+    match ft with
+    | .fun ptypes ret =>
+      if ptypes.length != args.length then none else do
+      let atypes ← args.mapM (type_check_env env)
+      if atypes == ptypes then some ret else none
+    | _ => none
+  | _, .funRef _ _ => none -- funRef needs env context, stub
 
 /-- Top-level type check. -/
 def type_check (e : Expr) : Option Ty := type_check_env [] e

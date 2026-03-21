@@ -319,3 +319,135 @@ TEST(TypeChecker, NestedVector) {
     EXPECT_EQ(t->kind, TypeKind::Vector);
     EXPECT_EQ(t->elem_types[0]->kind, TypeKind::Vector);
 }
+
+// ---- Phase 6: function type checking ----
+
+TEST(TypeChecker, FnDefBodyType) {
+    // fn foo(x: int): int { x + 1 }; foo(42) => Int
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "foo";
+    d.params = {{"x", int_type()}};
+    d.ret_type = int_type();
+    d.body = std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1));
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(42));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("foo"), std::move(args));
+
+    Program prog(std::move(defs), std::move(body));
+    auto t = type_check(prog);
+    EXPECT_EQ(t->kind, TypeKind::Int);
+}
+
+TEST(TypeChecker, FnArgCountMismatchThrows) {
+    // fn foo(x: int): int { x }; foo(1, 2) => TypeError
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "foo";
+    d.params = {{"x", int_type()}};
+    d.ret_type = int_type();
+    d.body = std::make_unique<VarExpr>("x");
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(1));
+    args.push_back(std::make_unique<IntExpr>(2));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("foo"), std::move(args));
+
+    Program prog(std::move(defs), std::move(body));
+    EXPECT_THROW(type_check(prog), TypeError);
+}
+
+TEST(TypeChecker, FnArgTypeMismatchThrows) {
+    // fn foo(x: int): int { x }; foo(true) => TypeError
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "foo";
+    d.params = {{"x", int_type()}};
+    d.ret_type = int_type();
+    d.body = std::make_unique<VarExpr>("x");
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<BoolExpr>(true));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("foo"), std::move(args));
+
+    Program prog(std::move(defs), std::move(body));
+    EXPECT_THROW(type_check(prog), TypeError);
+}
+
+TEST(TypeChecker, FnReturnTypeMismatchThrows) {
+    // fn foo(x: int): bool { x + 1 } => TypeError (body returns int, declared bool)
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "foo";
+    d.params = {{"x", int_type()}};
+    d.ret_type = bool_type();
+    d.body = std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1));
+    defs.push_back(std::move(d));
+
+    auto body = std::make_unique<IntExpr>(0);
+    Program prog(std::move(defs), std::move(body));
+    EXPECT_THROW(type_check(prog), TypeError);
+}
+
+TEST(TypeChecker, MutualRecursionTypechecks) {
+    // fn is_even(x: int): bool { if (x == 0) true else is_odd(x - 1) }
+    // fn is_odd(x: int): bool { if (x == 0) false else is_even(x - 1) }
+    // is_even(4)
+    std::vector<DefNode> defs;
+
+    // is_even
+    DefNode d1;
+    d1.name = "is_even";
+    d1.params = {{"x", int_type()}};
+    d1.ret_type = bool_type();
+    std::vector<std::unique_ptr<Expr>> odd_args;
+    odd_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1)));
+    d1.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<BoolExpr>(true),
+        std::make_unique<ApplyExpr>(
+            std::make_unique<VarExpr>("is_odd"), std::move(odd_args)));
+    defs.push_back(std::move(d1));
+
+    // is_odd
+    DefNode d2;
+    d2.name = "is_odd";
+    d2.params = {{"x", int_type()}};
+    d2.ret_type = bool_type();
+    std::vector<std::unique_ptr<Expr>> even_args;
+    even_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1)));
+    d2.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<BoolExpr>(false),
+        std::make_unique<ApplyExpr>(
+            std::make_unique<VarExpr>("is_even"), std::move(even_args)));
+    defs.push_back(std::move(d2));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(4));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("is_even"), std::move(args));
+
+    Program prog(std::move(defs), std::move(body));
+    auto t = type_check(prog);
+    EXPECT_EQ(t->kind, TypeKind::Bool);
+}

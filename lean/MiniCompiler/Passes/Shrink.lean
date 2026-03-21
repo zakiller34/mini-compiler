@@ -28,6 +28,12 @@ def shrink : Expr → Expr
   | .begin es => .begin (es.map shrink)
   | .void_ => .void_
   | .get n => .get n
+  | .vector_ es => .vector_ (es.map shrink)
+  | .vectorRef v i => .vectorRef (shrink v) i
+  | .vectorSet v i e => .vectorSet (shrink v) i (shrink e)
+  | .vectorLength v => .vectorLength (shrink v)
+  | .apply f args => .apply (shrink f) (args.map shrink)
+  | .funRef n a => .funRef n a
 
 /-- Shrink preserves evaluation semantics. -/
 theorem shrink_preserves_semantics : ∀ e : Expr,

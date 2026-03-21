@@ -332,3 +332,142 @@ TEST(Pipeline, TupleLength) {
     EXPECT_NE(asm_str.find("andq"), std::string::npos);
     EXPECT_NE(asm_str.find("sarq"), std::string::npos);
 }
+
+// ---- Phase 6: function pipeline tests ----
+
+TEST(Pipeline, SimpleFnCall) {
+    // fn add1(x: int): int { x + 1 }; add1(41)
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "add1";
+    d.params = {{"x", int_type()}};
+    d.ret_type = int_type();
+    d.body = std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1));
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(41));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("add1"), std::move(args));
+
+    auto asm_str = run_pipeline(std::move(body), std::move(defs));
+    EXPECT_FALSE(asm_str.empty());
+    EXPECT_NE(asm_str.find("add1"), std::string::npos);
+}
+
+TEST(Pipeline, RecursiveFn) {
+    // fn countdown(n: int): int { if (n == 0) 0 else countdown(n-1) + 1 }
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "countdown";
+    d.params = {{"n", int_type()}};
+    d.ret_type = int_type();
+    std::vector<std::unique_ptr<Expr>> rec_args;
+    rec_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("n"),
+        std::make_unique<IntExpr>(1)));
+    d.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("n"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<IntExpr>(0),
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Add,
+            std::make_unique<ApplyExpr>(
+                std::make_unique<VarExpr>("countdown"), std::move(rec_args)),
+            std::make_unique<IntExpr>(1)));
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(5));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("countdown"), std::move(args));
+
+    auto asm_str = run_pipeline(std::move(body), std::move(defs));
+    EXPECT_FALSE(asm_str.empty());
+    EXPECT_NE(asm_str.find("countdown"), std::string::npos);
+}
+
+TEST(Pipeline, MutualRecursion) {
+    // fn is_even(x: int): int { if (x == 0) 1 else is_odd(x - 1) }
+    // fn is_odd(x: int): int { if (x == 0) 0 else is_even(x - 1) }
+    std::vector<DefNode> defs;
+
+    DefNode d1;
+    d1.name = "is_even";
+    d1.params = {{"x", int_type()}};
+    d1.ret_type = int_type();
+    std::vector<std::unique_ptr<Expr>> odd_args;
+    odd_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1)));
+    d1.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<IntExpr>(1),
+        std::make_unique<ApplyExpr>(
+            std::make_unique<VarExpr>("is_odd"), std::move(odd_args)));
+    defs.push_back(std::move(d1));
+
+    DefNode d2;
+    d2.name = "is_odd";
+    d2.params = {{"x", int_type()}};
+    d2.ret_type = int_type();
+    std::vector<std::unique_ptr<Expr>> even_args;
+    even_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("x"),
+        std::make_unique<IntExpr>(1)));
+    d2.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("x"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<IntExpr>(0),
+        std::make_unique<ApplyExpr>(
+            std::make_unique<VarExpr>("is_even"), std::move(even_args)));
+    defs.push_back(std::move(d2));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(4));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("is_even"), std::move(args));
+
+    auto asm_str = run_pipeline(std::move(body), std::move(defs));
+    EXPECT_FALSE(asm_str.empty());
+    EXPECT_NE(asm_str.find("is_even"), std::string::npos);
+    EXPECT_NE(asm_str.find("is_odd"), std::string::npos);
+}
+
+TEST(Pipeline, TailCall) {
+    // fn loop(n: int): int { if (n == 0) 0 else loop(n - 1) }
+    // Tail position call should generate TailJmp
+    std::vector<DefNode> defs;
+    DefNode d;
+    d.name = "loop";
+    d.params = {{"n", int_type()}};
+    d.ret_type = int_type();
+    std::vector<std::unique_ptr<Expr>> rec_args;
+    rec_args.push_back(std::make_unique<BinaryExpr>(
+        BinaryOp::Sub, std::make_unique<VarExpr>("n"),
+        std::make_unique<IntExpr>(1)));
+    d.body = std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Eq, std::make_unique<VarExpr>("n"),
+            std::make_unique<IntExpr>(0)),
+        std::make_unique<IntExpr>(0),
+        std::make_unique<ApplyExpr>(
+            std::make_unique<VarExpr>("loop"), std::move(rec_args)));
+    defs.push_back(std::move(d));
+
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(10));
+    auto body = std::make_unique<ApplyExpr>(
+        std::make_unique<VarExpr>("loop"), std::move(args));
+
+    auto asm_str = run_pipeline(std::move(body), std::move(defs));
+    EXPECT_FALSE(asm_str.empty());
+    // Tail call should use jmp * not callq *
+    EXPECT_NE(asm_str.find("jmp *"), std::string::npos);
+}
