@@ -208,6 +208,43 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
     out += "(fun-ref " + fr->name + " " + std::to_string(fr->arity) + ")";
     break;
   }
+  case NodeKind::Lambda: {
+    auto *la = expr_cast<LambdaExpr>(e);
+    out += "(lambda (";
+    // invariant: out has params[0..i) dumped
+    for (size_t i = 0; i < la->params.size(); ++i) {
+      if (i > 0) out += " ";
+      out += "[" + la->params[i].first + " : " +
+             la->params[i].second->dump() + "]";
+    }
+    out += ") : " + la->ret_type->dump() + " ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, la->body.get(), ""});
+    break;
+  }
+  case NodeKind::ProcArity: {
+    auto *pa = expr_cast<ProcArityExpr>(e);
+    out += "(procedure-arity ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, pa->expr.get(), ""});
+    break;
+  }
+  case NodeKind::Closure: {
+    auto *cl = expr_cast<ClosureExpr>(e);
+    out += "(closure " + std::to_string(cl->arity);
+    tasks.push_back({Action::Append, nullptr, ")"});
+    for (int i = static_cast<int>(cl->elems.size()) - 1; i >= 0; --i) {
+      tasks.push_back({Action::Visit, cl->elems[i].get(), ""});
+      tasks.push_back({Action::Append, nullptr, " "});
+    }
+    break;
+  }
+  case NodeKind::AllocateClosure: {
+    auto *ac = expr_cast<AllocateClosureExpr>(e);
+    out += "(allocate-closure " + std::to_string(ac->len) + " " +
+           ac->type->dump() + " " + std::to_string(ac->arity) + ")";
+    break;
+  }
   }
 }
 
@@ -279,6 +316,14 @@ std::string GlobalValueExpr::dump() const { return dump_iterative(this); }
 std::string ApplyExpr::dump() const { return dump_iterative(this); }
 
 std::string FunRefExpr::dump() const { return dump_iterative(this); }
+
+std::string LambdaExpr::dump() const { return dump_iterative(this); }
+
+std::string ProcArityExpr::dump() const { return dump_iterative(this); }
+
+std::string ClosureExpr::dump() const { return dump_iterative(this); }
+
+std::string AllocateClosureExpr::dump() const { return dump_iterative(this); }
 
 std::string DefNode::dump() const {
   std::string result = "(def " + name + " (";

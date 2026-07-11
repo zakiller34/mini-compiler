@@ -36,6 +36,9 @@ struct ApplyFuncFrame {
 struct ApplyArgsFrame {
     size_t total_args;
 };
+struct ProcArityFrame {};
+/// Restores the caller's environment after a closure body finishes.
+struct RestoreEnvFrame { std::map<std::string, Value> saved; };
 
 using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            BinLhsFrame, BinRhsFrame, IfCondFrame,
@@ -44,7 +47,8 @@ using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            VectorBuildFrame, VectorRefVecFrame,
                            VectorSetVecFrame, VectorSetValFrame,
                            VectorLengthVecFrame,
-                           ApplyFuncFrame, ApplyArgsFrame>;
+                           ApplyFuncFrame, ApplyArgsFrame,
+                           ProcArityFrame, RestoreEnvFrame>;
 
 /// @brief Get int64_t from Value or throw
 int64_t as_int(const Value &v) { return std::get<int64_t>(v); }
@@ -184,7 +188,9 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
     case NodeKind::Allocate:
     case NodeKind::Collect:
     case NodeKind::GlobalValue:
-        // These are compiler-internal nodes, not interpreted
+    case NodeKind::Closure:
+    case NodeKind::AllocateClosure:
+        // These are compiler-internal nodes, not interpreted from source
         values.push_back(std::monostate{});
         break;
     case NodeKind::FunRef: {
@@ -200,6 +206,24 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
         }
         stack.push_back(ApplyFuncFrame{ae->args.size(), std::move(remaining)});
         stack.push_back(EvalFrame{ae->func.get()});
+        break;
+    }
+    case NodeKind::Lambda: {
+        auto *la = expr_cast<LambdaExpr>(e);
+        auto clos = std::make_shared<ClosureData>();
+        for (const auto &p : la->params) {
+            clos->params.push_back(p.first);
+        }
+        clos->body = la->body.get();
+        clos->captured = env; // snapshot of enclosing scope (copying closure)
+        clos->arity = static_cast<int64_t>(la->params.size());
+        values.push_back(ClosureRef{clos});
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityFrame{});
+        stack.push_back(EvalFrame{pa->expr.get()});
         break;
     }
     }
@@ -346,23 +370,43 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         }
         std::reverse(args.begin(), args.end());
         Value func_val = values.back(); values.pop_back();
-        // func_val is either FunctionValue or VarExpr looked up
-        FunctionValue fv;
-        if (auto *f = std::get_if<FunctionValue>(&func_val)) {
-            fv = *f;
+        if (auto *cl = std::get_if<ClosureRef>(&func_val)) {
+            // Lexical closure: run body in a fresh env = captured + params,
+            // then restore the caller's env.
+            const ClosureData &cd = **cl;
+            stack.push_back(RestoreEnvFrame{env});
+            Env new_env = cd.captured;
+            // invariant: params[0..i) bound in new_env
+            for (size_t i = 0; i < cd.params.size(); ++i) {
+                new_env[cd.params[i]] = args[i];
+            }
+            env = std::move(new_env);
+            stack.push_back(EvalFrame{cd.body});
+        } else if (auto *f = std::get_if<FunctionValue>(&func_val)) {
+            const DefNode *def = find_def(f->name);
+            if (def == nullptr) {
+                throw std::runtime_error("apply: unknown function " + f->name);
+            }
+            // Top-level functions: bind params in flat env (names unique).
+            // invariant: params[0..i) bound
+            for (size_t i = 0; i < def->params.size(); ++i) {
+                env[def->params[i].first] = args[i];
+            }
+            stack.push_back(EvalFrame{def->body.get()});
         } else {
             throw std::runtime_error("apply: not a function");
         }
-        const DefNode *def = find_def(fv.name);
-        if (def == nullptr) {
-            throw std::runtime_error("apply: unknown function " + fv.name);
+    } else if (std::get_if<ProcArityFrame>(&frame) != nullptr) {
+        Value v = values.back(); values.pop_back();
+        if (auto *cl = std::get_if<ClosureRef>(&v)) {
+            values.push_back((*cl)->arity);
+        } else if (auto *f = std::get_if<FunctionValue>(&v)) {
+            values.push_back(f->arity);
+        } else {
+            throw std::runtime_error("procedure_arity: not a function");
         }
-        // Bind params -> args in env
-        // invariant: params[0..i) bound
-        for (size_t i = 0; i < def->params.size(); ++i) {
-            env[def->params[i].first] = args[i];
-        }
-        stack.push_back(EvalFrame{def->body.get()});
+    } else if (auto *rf = std::get_if<RestoreEnvFrame>(&frame)) {
+        env = std::move(rf->saved);
     }
 }
 

@@ -4,6 +4,8 @@
 #include "parser.h"
 #include "type_checker.h"
 #include "passes/assign_homes.h"
+#include "passes/convert_assignments.h"
+#include "passes/convert_to_closures.h"
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
 #include "passes/expose_allocation.h"
@@ -57,10 +59,10 @@ int compile(const std::string &src_file, const std::string &out_file) {
     auto p0 = shrink(*prog);
     auto p1 = uniquify(*p0);
     auto p1a = reveal_functions(*p1);
-    // limit_functions is identity for <=6 params (returns nullptr)
-    auto p1a2 = limit_functions(*p1a);
-    const auto &p1a_ref = p1a2 ? *p1a2 : *p1a;
-    auto p1b = uncover_get(p1a_ref);
+    auto p1ca = convert_assignments(*p1a);
+    auto p1cc = convert_to_closures(*p1ca);
+    auto p1lf = limit_functions(*p1cc); // packs >6 args into a tuple
+    auto p1b = uncover_get(*p1lf);
     auto p1c = expose_allocation(*p1b);
     auto p2 = remove_complex_operands(*p1c);
     auto c_prog = explicate_control(*p2);
@@ -101,6 +103,9 @@ int run_interpret(const std::string &src_file,
             std::cout << (*b ? "true" : "false") << "\n";
         } else if (std::holds_alternative<Tuple>(result)) {
             std::cout << "(vector ...)" << "\n";
+        } else if (std::holds_alternative<FunctionValue>(result) ||
+                   std::holds_alternative<ClosureRef>(result)) {
+            std::cout << "(procedure ...)" << "\n";
         } else {
             std::cout << "(void)" << "\n";
         }

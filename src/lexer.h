@@ -47,6 +47,8 @@ enum class TokenKind {
     Colon,
     Int_kw,
     Bool_kw,
+    Lambda,
+    ProcArity,
     Eof,
     Error
 };

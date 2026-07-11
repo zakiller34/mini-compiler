@@ -41,6 +41,8 @@ struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; };
+struct ClosureBuild { size_t total; int64_t arity; };
+struct ProcArityBuild {};
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -49,7 +51,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild, ApplyBuild>;
+                           VectorLengthBuild, ApplyBuild,
+                           ClosureBuild, ProcArityBuild>;
 
 /// @brief Infer the type of a vector literal for Allocate node
 /// @requires elems non-empty; elements already expose-allocated
@@ -72,6 +75,60 @@ TypePtr infer_vector_type(const std::vector<std::unique_ptr<Expr>> &elems) {
         }
     }
     return vector_type(std::move(ts));
+}
+
+/// @brief Conservative closure layout type: an n-slot Vector (a GC root),
+///        with each slot marked non-pointer (interior tracing is imprecise).
+/// @ensures is_vector_type(result) is true; no slot is itself a Vector
+TypePtr closure_layout_type(size_t n) {
+    return vector_type(std::vector<TypePtr>(n, int_type()));
+}
+
+/// @brief GC check: if free_ptr+bytes < fromspace_end then void else collect.
+std::unique_ptr<Expr> make_gc_check(int64_t bytes) {
+    return std::make_unique<IfExpr>(
+        std::make_unique<BinaryExpr>(
+            BinaryOp::Lt,
+            std::make_unique<BinaryExpr>(
+                BinaryOp::Add,
+                std::make_unique<GlobalValueExpr>("free_ptr"),
+                std::make_unique<IntExpr>(bytes)),
+            std::make_unique<GlobalValueExpr>("fromspace_end")),
+        std::make_unique<VoidExpr>(),
+        std::make_unique<CollectExpr>(bytes));
+}
+
+/// @brief Lower a vector/closure literal: bind elems to temps, GC-check,
+///        allocate, initialize slots, return the object.
+/// @requires alloc_node is an Allocate/AllocateClosure of length n
+std::unique_ptr<Expr> lower_allocation(
+    std::vector<std::unique_ptr<Expr>> elem_exprs,
+    std::unique_ptr<Expr> alloc_node, int64_t n, int &tmp_counter) {
+    std::vector<std::string> tmp_names;
+    // invariant: tmp_names has a fresh name per elem[0..i)
+    for (size_t i = 0; i < elem_exprs.size(); ++i) {
+        tmp_names.push_back(fresh_tmp(tmp_counter));
+    }
+    std::vector<std::unique_ptr<Expr>> begin_body;
+    begin_body.push_back(make_gc_check(kWordSize * (n + 1)));
+    std::string v_name = fresh_tmp(tmp_counter);
+    // invariant: begin_body has set!s for slots[0..i)
+    for (size_t i = 0; i < tmp_names.size(); ++i) {
+        begin_body.push_back(std::make_unique<VectorSetExpr>(
+            std::make_unique<VarExpr>(v_name), static_cast<int64_t>(i),
+            std::make_unique<VarExpr>(tmp_names[i])));
+    }
+    begin_body.push_back(std::make_unique<VarExpr>(v_name));
+    std::unique_ptr<Expr> inner = std::make_unique<LetExpr>(
+        v_name, std::move(alloc_node),
+        std::make_unique<BeginExpr>(std::move(begin_body)));
+    // decreases: i; invariant: inner wrapped with lets for elems[i+1..]
+    for (int i = static_cast<int>(tmp_names.size()) - 1; i >= 0; --i) {
+        inner = std::make_unique<LetExpr>(
+            tmp_names[static_cast<size_t>(i)],
+            std::move(elem_exprs[static_cast<size_t>(i)]), std::move(inner));
+    }
+    return inner;
 }
 
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
@@ -204,6 +261,27 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         results.push_back(std::make_unique<GlobalValueExpr>(
             expr_cast<GlobalValueExpr>(e)->name));
         break;
+    case NodeKind::Closure: {
+        auto *cl = expr_cast<ClosureExpr>(e);
+        stack.push_back(ClosureBuild{cl->elems.size(), cl->arity});
+        // decreases: i; invariant: elems[i+1..] queued (reverse order)
+        for (int i = static_cast<int>(cl->elems.size()) - 1; i >= 0; --i) {
+            stack.push_back(EvalFrame{cl->elems[static_cast<size_t>(i)].get()});
+        }
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityBuild{});
+        stack.push_back(EvalFrame{pa->expr.get()});
+        break;
+    }
+    case NodeKind::AllocateClosure:
+        results.push_back(std::make_unique<AllocateClosureExpr>(
+            expr_cast<AllocateClosureExpr>(e)->len,
+            expr_cast<AllocateClosureExpr>(e)->type,
+            expr_cast<AllocateClosureExpr>(e)->arity));
+        break;
     }
 }
 
@@ -273,74 +351,33 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
     } else if (auto *vb = std::get_if<VectorBuild>(&frame)) {
         // All n elements are on results stack (in order)
         std::vector<std::unique_ptr<Expr>> elem_exprs;
+        // invariant: elem_exprs has last i popped; decreases: total-i
         for (size_t i = 0; i < vb->total; ++i) {
             elem_exprs.push_back(std::move(results.back()));
             results.pop_back();
         }
         std::reverse(elem_exprs.begin(), elem_exprs.end());
-
-        // Infer vector type from element expressions
         TypePtr vtype = infer_vector_type(elem_exprs);
         int64_t n = static_cast<int64_t>(vb->total);
-        int64_t bytes = kWordSize * (n + 1); // tag + n elements
-
-        // Build: let t0=e0 in ... let tn=en in
-        //   begin { if (+ free_ptr bytes) < fromspace_end then void
-        //           else collect(bytes);
-        //           let v = allocate(n, type);
-        //           vector-set!(v,0,t0); ... vector-set!(v,n-1,tn);
-        //           v }
-
-        // Generate temp names for each element
-        std::vector<std::string> tmp_names;
-        for (size_t i = 0; i < elem_exprs.size(); ++i) {
-            tmp_names.push_back(fresh_tmp(tmp_counter));
+        auto alloc = std::make_unique<AllocateExpr>(n, vtype);
+        results.push_back(lower_allocation(std::move(elem_exprs),
+                                           std::move(alloc), n, tmp_counter));
+    } else if (auto *cb = std::get_if<ClosureBuild>(&frame)) {
+        std::vector<std::unique_ptr<Expr>> elem_exprs;
+        // invariant: elem_exprs has last i popped; decreases: total-i
+        for (size_t i = 0; i < cb->total; ++i) {
+            elem_exprs.push_back(std::move(results.back()));
+            results.pop_back();
         }
-
-        // Build the begin body
-        std::vector<std::unique_ptr<Expr>> begin_body;
-
-        // if (+ (global free_ptr) bytes) < (global fromspace_end)
-        //   then void else collect(bytes)
-        auto gc_check = std::make_unique<IfExpr>(
-            std::make_unique<BinaryExpr>(
-                BinaryOp::Lt,
-                std::make_unique<BinaryExpr>(
-                    BinaryOp::Add,
-                    std::make_unique<GlobalValueExpr>("free_ptr"),
-                    std::make_unique<IntExpr>(bytes)),
-                std::make_unique<GlobalValueExpr>("fromspace_end")),
-            std::make_unique<VoidExpr>(),
-            std::make_unique<CollectExpr>(bytes));
-        begin_body.push_back(std::move(gc_check));
-
-        // let v = allocate(n, type)
-        std::string v_name = fresh_tmp(tmp_counter);
-
-        // vector-set!(v, i, ti) for each element
-        for (size_t i = 0; i < tmp_names.size(); ++i) {
-            begin_body.push_back(std::make_unique<VectorSetExpr>(
-                std::make_unique<VarExpr>(v_name),
-                static_cast<int64_t>(i),
-                std::make_unique<VarExpr>(tmp_names[i])));
-        }
-
-        // final: v
-        begin_body.push_back(std::make_unique<VarExpr>(v_name));
-
-        // Wrap in let v = allocate(n, type); begin { ... }
-        std::unique_ptr<Expr> inner = std::make_unique<LetExpr>(
-            v_name,
-            std::make_unique<AllocateExpr>(n, vtype),
-            std::make_unique<BeginExpr>(std::move(begin_body)));
-
-        // Wrap in let ti = ei for each element (outermost first)
-        for (int i = static_cast<int>(tmp_names.size()) - 1; i >= 0; --i) {
-            inner = std::make_unique<LetExpr>(
-                tmp_names[i], std::move(elem_exprs[i]), std::move(inner));
-        }
-
-        results.push_back(std::move(inner));
+        std::reverse(elem_exprs.begin(), elem_exprs.end());
+        int64_t n = static_cast<int64_t>(cb->total);
+        auto alloc = std::make_unique<AllocateClosureExpr>(
+            n, closure_layout_type(cb->total), cb->arity);
+        results.push_back(lower_allocation(std::move(elem_exprs),
+                                           std::move(alloc), n, tmp_counter));
+    } else if (std::get_if<ProcArityBuild>(&frame) != nullptr) {
+        auto v = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<ProcArityExpr>(std::move(v)));
     } else if (auto *vr = std::get_if<VectorRefBuild>(&frame)) {
         auto vec = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<VectorRefExpr>(

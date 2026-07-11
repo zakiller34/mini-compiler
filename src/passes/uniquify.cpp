@@ -33,6 +33,11 @@ struct VectorSetVecBuild { int64_t index; const Expr *val; RenameEnv env; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; RenameEnv env; };
+struct LambdaBuild {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    TypePtr ret_type;
+};
+struct ProcArityBuild {};
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -41,7 +46,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild, ApplyBuild>;
+                           VectorLengthBuild, ApplyBuild,
+                           LambdaBuild, ProcArityBuild>;
 
 /// @brief Evaluate leaf or push continuation frames for uniquify
 /// @requires ef.expr != nullptr
@@ -177,9 +183,31 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{ap->func.get(), env});
         break;
     }
+    case NodeKind::Lambda: {
+        auto *la = expr_cast<LambdaExpr>(e);
+        RenameEnv body_env = env;
+        std::vector<std::pair<std::string, TypePtr>> new_params;
+        // invariant: new_params has renamed params[0..i); body_env extended
+        for (const auto &p : la->params) {
+            std::string new_name = p.first + "." + std::to_string(counter++);
+            body_env[p.first] = new_name;
+            new_params.push_back({new_name, p.second});
+        }
+        stack.push_back(LambdaBuild{std::move(new_params), la->ret_type});
+        stack.push_back(EvalFrame{la->body.get(), std::move(body_env)});
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityBuild{});
+        stack.push_back(EvalFrame{pa->expr.get(), env});
+        break;
+    }
     case NodeKind::Allocate:
     case NodeKind::Collect:
     case NodeKind::GlobalValue:
+    case NodeKind::Closure:
+    case NodeKind::AllocateClosure:
         results.push_back(std::make_unique<VoidExpr>());
         break;
     }
@@ -299,6 +327,14 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             stack.push_back(ApplyBuild{ab->total, std::move(rest), ab->env});
             stack.push_back(EvalFrame{next, ab->env});
         }
+    } else if (auto *lam = std::get_if<LambdaBuild>(&frame)) {
+        auto body = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<LambdaExpr>(
+            lam->params, lam->ret_type, std::move(body)));
+    } else if (std::get_if<ProcArityBuild>(&frame) != nullptr) {
+        auto inner = std::move(results.back()); results.pop_back();
+        results.push_back(
+            std::make_unique<ProcArityExpr>(std::move(inner)));
     }
 }
 

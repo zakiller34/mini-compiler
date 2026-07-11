@@ -21,8 +21,8 @@ struct BinBuildRhs { BinaryOp op; Need need; };
 struct IfBuildCond { const Expr *then_br; const Expr *else_br; Need need; };
 struct IfBuildThen { const Expr *else_br; Need need; };
 struct IfBuildElse { Need need; };
-struct LetBuildInit { std::string var; const Expr *body; };
-struct LetBuildBody { std::string var; };
+struct LetBuildInit { std::string var; const Expr *body; Need need; };
+struct LetBuildBody { std::string var; Need need; };
 struct WhileBuildCond { const Expr *body; Need need; };
 struct WhileBuildBody { Need need; };
 struct SetBangBuild { std::string var; Need need; };
@@ -32,6 +32,7 @@ struct VectorSetVecBuild { int64_t index; const Expr *val; Need need; };
 struct VectorSetValBuild { int64_t index; Need need; };
 struct VectorLengthBuild { Need need; };
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; Need need; };
+struct ProcArityBuild { Need need; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -40,7 +41,7 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorRefBuild, VectorSetVecBuild,
                            VectorSetValBuild, VectorLengthBuild,
-                           ApplyBuild>;
+                           ApplyBuild, ProcArityBuild>;
 
 using Binding = std::pair<std::string, std::unique_ptr<Expr>>;
 
@@ -83,9 +84,14 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<Result> &results, int &tmp_counter) {
     const Expr *e = ef.expr;
 
-    if (auto leaf = clone_leaf(e)) {
-        results.push_back({std::move(*leaf), {}});
-        return;
+    // Read is a leaf, but unlike Int/Bool/Void it is *effectful* and must be
+    // atomized (let-bound) when in operand position — so we skip the
+    // clone_leaf shortcut for Read and let the dedicated case below handle it.
+    if (e->kind() != NodeKind::Read) {
+        if (auto leaf = clone_leaf(e)) {
+            results.push_back({std::move(*leaf), {}});
+            return;
+        }
     }
     switch (e->kind()) {
     case NodeKind::Var:
@@ -119,7 +125,7 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     }
     case NodeKind::Let: {
         auto *le = expr_cast<LetExpr>(e);
-        stack.push_back(LetBuildInit{le->var, le->body.get()});
+        stack.push_back(LetBuildInit{le->var, le->body.get(), ef.need});
         stack.push_back(EvalFrame{le->init.get(), Need::Expr});
         break;
     }
@@ -212,8 +218,25 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{ap->func.get(), Need::Atom});
         break;
     }
+    case NodeKind::AllocateClosure: {
+        auto *ac = expr_cast<AllocateClosureExpr>(e);
+        Result res = {std::make_unique<AllocateClosureExpr>(
+                          ac->len, ac->type, ac->arity), {}};
+        atomize(res, ef.need, tmp_counter);
+        results.push_back(std::move(res));
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityBuild{ef.need});
+        stack.push_back(EvalFrame{pa->expr.get(), Need::Atom});
+        break;
+    }
     case NodeKind::Vector:
         // Should not appear after expose_allocation
+        results.push_back({std::make_unique<VoidExpr>(), {}});
+        break;
+    default:
         results.push_back({std::make_unique<VoidExpr>(), {}});
         break;
     }
@@ -264,16 +287,20 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         atomize(res, ie->need, tmp_counter);
         results.push_back(std::move(res));
     } else if (auto *li = std::get_if<LetBuildInit>(&frame)) {
-        stack.push_back(LetBuildBody{li->var});
-        stack.push_back(EvalFrame{li->body, Need::Expr});
+        stack.push_back(LetBuildBody{li->var, li->need});
+        stack.push_back(EvalFrame{li->body, li->need});
     } else if (auto *lb = std::get_if<LetBuildBody>(&frame)) {
         auto body = std::move(results.back()); results.pop_back();
         auto init = std::move(results.back()); results.pop_back();
-        auto init_w = wrap_bindings(std::move(init.expr), init.bindings);
-        auto body_w = wrap_bindings(std::move(body.expr), body.bindings);
+        // Hoist the let binding into the surrounding context so the let can
+        // appear (and be atomized) in operand position.
         Result res;
-        res.expr = std::make_unique<LetExpr>(lb->var, std::move(init_w),
-                                              std::move(body_w));
+        res.bindings = std::move(init.bindings);
+        res.bindings.push_back({lb->var, std::move(init.expr)});
+        // invariant: res.bindings has init binds + this let + body[0..i)
+        for (auto &b : body.bindings) res.bindings.push_back(std::move(b));
+        res.expr = std::move(body.expr);
+        atomize(res, lb->need, tmp_counter);
         results.push_back(std::move(res));
     } else if (auto *wc = std::get_if<WhileBuildCond>(&frame)) {
         stack.push_back(WhileBuildBody{wc->need});
@@ -322,6 +349,13 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         res.bindings = std::move(vec.bindings);
         res.expr = std::make_unique<VectorLengthExpr>(std::move(vec.expr));
         atomize(res, vl->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *pa = std::get_if<ProcArityBuild>(&frame)) {
+        auto operand = std::move(results.back()); results.pop_back();
+        Result res;
+        res.bindings = std::move(operand.bindings);
+        res.expr = std::make_unique<ProcArityExpr>(std::move(operand.expr));
+        atomize(res, pa->need, tmp_counter);
         results.push_back(std::move(res));
     } else if (auto *ab = std::get_if<ApplyBuild>(&frame)) {
         if (ab->remaining.empty()) {

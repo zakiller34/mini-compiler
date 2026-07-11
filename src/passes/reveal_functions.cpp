@@ -35,6 +35,11 @@ struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; };
+struct LambdaBuild {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    TypePtr ret_type;
+};
+struct ProcArityBuild {};
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -43,7 +48,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild, ApplyBuild>;
+                           VectorLengthBuild, ApplyBuild,
+                           LambdaBuild, ProcArityBuild>;
 
 /// @brief Evaluate leaf or push continuation frames
 void push_eval(const EvalFrame &ef, const FunMap &funs,
@@ -172,9 +178,23 @@ void push_eval(const EvalFrame &ef, const FunMap &funs,
         results.push_back(std::make_unique<FunRefExpr>(fr->name, fr->arity));
         break;
     }
+    case NodeKind::Lambda: {
+        auto *la = expr_cast<LambdaExpr>(e);
+        stack.push_back(LambdaBuild{la->params, la->ret_type});
+        stack.push_back(EvalFrame{la->body.get()});
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityBuild{});
+        stack.push_back(EvalFrame{pa->expr.get()});
+        break;
+    }
     case NodeKind::Allocate:
     case NodeKind::Collect:
     case NodeKind::GlobalValue:
+    case NodeKind::Closure:
+    case NodeKind::AllocateClosure:
         results.push_back(std::make_unique<VoidExpr>());
         break;
     }
@@ -293,6 +313,13 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             stack.push_back(ApplyBuild{ab->total, std::move(rest)});
             stack.push_back(EvalFrame{next});
         }
+    } else if (auto *lam = std::get_if<LambdaBuild>(&frame)) {
+        auto body = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<LambdaExpr>(
+            std::move(lam->params), std::move(lam->ret_type), std::move(body)));
+    } else if (std::get_if<ProcArityBuild>(&frame) != nullptr) {
+        auto expr = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<ProcArityExpr>(std::move(expr)));
     }
 }
 

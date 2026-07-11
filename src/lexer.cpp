@@ -117,6 +117,8 @@ Token Lexer::next() {
         if (id == "fn") { return {TokenKind::Fn, id, 0}; }
         if (id == "Int") { return {TokenKind::Int_kw, id, 0}; }
         if (id == "Bool") { return {TokenKind::Bool_kw, id, 0}; }
+        if (id == "lambda") { return {TokenKind::Lambda, id, 0}; }
+        if (id == "procedure_arity") { return {TokenKind::ProcArity, id, 0}; }
         return {TokenKind::Ident, id, 0};
     }
 

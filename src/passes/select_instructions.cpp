@@ -125,6 +125,32 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         instrs.push_back(x86::IndirectCallq{atom_to_arg(ca->func),
             static_cast<int64_t>(ca->args.size())});
         instrs.push_back(x86::Movq{x86::RegArg{x86::Reg::Rax}, dst});
+    } else if (const auto *ac = std::get_if<cir::CAllocateClosureExpr>(&expr)) {
+        // Like CAllocate, plus arity encoded in tag bits 57-61.
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        x86::Arg fp = x86::GlobalArg{"free_ptr"};
+        int64_t n = ac->len;
+        int64_t bytes = kWordSize * (n + 1);
+        int64_t tag = (n & 0x3F) << 1;
+        // invariant: tag has pointer-mask bits for slots[0..i)
+        for (int64_t i = 0; i < n; ++i) {
+            if (i < static_cast<int64_t>(ac->type->elem_types.size()) &&
+                is_vector_type(ac->type->elem_types[static_cast<size_t>(i)])) {
+                tag |= (1LL << (7 + i));
+            }
+        }
+        tag |= (ac->arity & 0x1F) << 57; // arity in bits 57-61
+        instrs.push_back(x86::Movq{fp, r11});
+        instrs.push_back(x86::Addq{x86::Imm{bytes}, fp});
+        instrs.push_back(x86::Movq{x86::Imm{tag}, x86::Deref{x86::Reg::R11, 0}});
+        instrs.push_back(x86::Movq{r11, dst});
+    } else if (const auto *pa = std::get_if<cir::CProcArityExpr>(&expr)) {
+        // movq clos -> r11, movq tag -> dst, sarq $57, andq $0x1F
+        x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+        instrs.push_back(x86::Movq{atom_to_arg(pa->clos), r11});
+        instrs.push_back(x86::Movq{x86::Deref{x86::Reg::R11, 0}, dst});
+        instrs.push_back(x86::Sarq{x86::Imm{57}, dst});
+        instrs.push_back(x86::Andq{x86::Imm{0x1F}, dst});
     }
 }
 
@@ -172,6 +198,7 @@ static bool blocks_have_gc(
     for (const auto &[label, blk] : blocks) {
         for (const auto &stmt : blk.stmts) {
             if (std::holds_alternative<cir::CAllocateExpr>(stmt.expr) ||
+                std::holds_alternative<cir::CAllocateClosureExpr>(stmt.expr) ||
                 std::holds_alternative<cir::CCollectExpr>(stmt.expr) ||
                 std::holds_alternative<cir::CGlobalValueExpr>(stmt.expr)) {
                 return true;

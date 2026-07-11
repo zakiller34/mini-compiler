@@ -24,16 +24,18 @@ class ParseError : public std::runtime_error {
 ///   cmp_expr → additive ((EQ|LT|LE|GT|GE) additive)?
 ///   additive → additive (+|-) unary | unary
 ///   unary    → NOT unary | '-' unary | primary
-///   primary  → INT | IDENT ('(' args ')')? | TRUE | FALSE | READ '(' ')'
+///   primary  → INT | IDENT | TRUE | FALSE | READ '(' ')'
 ///            | IF '(' expr ')' '{' expr '}' ELSE '{' expr '}'
 ///            | WHILE '(' expr ')' '{' expr '}'
 ///            | BEGIN '{' expr (';' expr)* '}'
 ///            | SET '!' IDENT expr
 ///            | VECTOR '(' expr (',' expr)* ')'
 ///            | LENGTH '(' expr ')'
+///            | LAMBDA '(' params ')' ':' type '{' expr '}'
+///            | PROCEDURE_ARITY '(' expr ')'
 ///            | VOID
 ///            | '(' expr ')'
-/// postfix    → primary ('[' INT ']' ('=' expr)? )*
+/// postfix    → primary ('[' INT ']' ('=' expr)? | '(' args ')')*
 ///   program  → def* expr EOF
 ///   def      → FN IDENT '(' params ')' ':' type '{' expr '}'
 ///   params   → (IDENT ':' type (',' IDENT ':' type)*)?
@@ -60,6 +62,7 @@ class Parser {
     std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
     TypePtr parse_type();
+    std::vector<std::pair<std::string, TypePtr>> parse_params();
     DefNode parse_def();
 };
 

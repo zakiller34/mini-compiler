@@ -26,6 +26,9 @@ add_library(mc_lib STATIC
     passes/emit.cpp
     passes/reveal_functions.cpp
     passes/limit_functions.cpp
+    passes/free_vars.cpp
+    passes/convert_assignments.cpp
+    passes/convert_to_closures.cpp
 )
 
 target_include_directories(mc_lib PUBLIC

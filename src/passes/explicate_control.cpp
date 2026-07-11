@@ -119,6 +119,14 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
         for (const auto &a : ae->args) args.push_back(make_atom(a.get()));
         return cir::CCallExpr{make_atom(ae->func.get()), std::move(args)};
     }
+    case NodeKind::AllocateClosure: {
+        auto *ac = expr_cast<AllocateClosureExpr>(e);
+        return cir::CAllocateClosureExpr{ac->len, ac->type, ac->arity};
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        return cir::CProcArityExpr{make_atom(pa->expr.get())};
+    }
     default:
         return cir::AtomExpr{cir::IntAtom{0}};
     }

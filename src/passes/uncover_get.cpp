@@ -126,6 +126,12 @@ struct VectorSetVecBuild { int64_t index; const Expr *val; };
 struct VectorSetValBuild { int64_t index; };
 struct VectorLengthBuild {};
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; };
+struct ClosureBuild {
+    int64_t arity;
+    size_t total;
+    std::vector<const Expr *> remaining;
+};
+struct ProcArityBuild {};
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -134,7 +140,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
-                           VectorLengthBuild, ApplyBuild>;
+                           VectorLengthBuild, ApplyBuild,
+                           ClosureBuild, ProcArityBuild>;
 
 /// @brief Evaluate leaf or push continuation frames for uncover_get
 /// @requires ef.expr != nullptr
@@ -265,9 +272,40 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         stack.push_back(EvalFrame{ap->func.get()});
         break;
     }
+    case NodeKind::Closure: {
+        auto *ce = expr_cast<ClosureExpr>(e);
+        if (ce->elems.empty()) {
+            results.push_back(std::make_unique<ClosureExpr>(
+                ce->arity, std::vector<std::unique_ptr<Expr>>{}));
+        } else {
+            std::vector<const Expr *> remaining;
+            // decreases: ce->elems.size() - i
+            // invariant: remaining == elems[1..i)
+            for (size_t i = 1; i < ce->elems.size(); ++i) {
+                remaining.push_back(ce->elems[i].get());
+            }
+            stack.push_back(ClosureBuild{ce->arity, ce->elems.size(),
+                                          std::move(remaining)});
+            stack.push_back(EvalFrame{ce->elems[0].get()});
+        }
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityBuild{});
+        stack.push_back(EvalFrame{pa->expr.get()});
+        break;
+    }
+    case NodeKind::AllocateClosure: {
+        auto *ac = expr_cast<AllocateClosureExpr>(e);
+        results.push_back(std::make_unique<AllocateClosureExpr>(
+            ac->len, ac->type, ac->arity));
+        break;
+    }
     case NodeKind::Allocate:
     case NodeKind::Collect:
     case NodeKind::GlobalValue:
+    case NodeKind::Lambda:
         results.push_back(std::make_unique<VoidExpr>());
         break;
     }
@@ -388,6 +426,29 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             stack.push_back(ApplyBuild{ab->total, std::move(rest)});
             stack.push_back(EvalFrame{next});
         }
+    } else if (auto *cb = std::get_if<ClosureBuild>(&frame)) {
+        if (cb->remaining.empty()) {
+            std::vector<std::unique_ptr<Expr>> elems;
+            // decreases: cb->total - i
+            // invariant: elems == last i child results (reversed)
+            for (size_t i = 0; i < cb->total; ++i) {
+                elems.push_back(std::move(results.back()));
+                results.pop_back();
+            }
+            std::reverse(elems.begin(), elems.end());
+            results.push_back(std::make_unique<ClosureExpr>(
+                cb->arity, std::move(elems)));
+        } else {
+            const Expr *next = cb->remaining[0];
+            std::vector<const Expr *> rest(cb->remaining.begin() + 1,
+                                            cb->remaining.end());
+            stack.push_back(ClosureBuild{cb->arity, cb->total,
+                                          std::move(rest)});
+            stack.push_back(EvalFrame{next});
+        }
+    } else if (std::get_if<ProcArityBuild>(&frame) != nullptr) {
+        auto expr = std::move(results.back()); results.pop_back();
+        results.push_back(std::make_unique<ProcArityExpr>(std::move(expr)));
     }
 }
 

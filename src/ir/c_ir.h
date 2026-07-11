@@ -39,12 +39,15 @@ struct CCollectExpr { int64_t bytes; };
 struct CFunRefExpr { std::string name; int64_t arity; };
 struct CCallExpr { Atom func; std::vector<Atom> args; };
 struct CTailCallExpr { Atom func; std::vector<Atom> args; };
+struct CAllocateClosureExpr { int64_t len; TypePtr type; int64_t arity; };
+struct CProcArityExpr { Atom clos; };
 
 using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr,
                            CCmpExpr, CNotExpr,
                            CAllocateExpr, CVectorRefExpr, CVectorSetExpr,
                            CVectorLengthExpr, CGlobalValueExpr,
-                           CCollectExpr, CFunRefExpr, CCallExpr>;
+                           CCollectExpr, CFunRefExpr, CCallExpr,
+                           CAllocateClosureExpr, CProcArityExpr>;
 
 // -- Statements --
 

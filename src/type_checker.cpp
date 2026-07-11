@@ -80,6 +80,11 @@ struct ApplyBuildFrame {
     std::vector<const Expr *> remaining;
     TypeEnv env;
 };
+struct LambdaBodyFrame {
+    std::vector<TypePtr> param_types;
+    TypePtr ret_type;
+};
+struct ProcArityFrame {};
 
 using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            IfCondFrame, IfThenFrame, IfElseFrame,
@@ -88,7 +93,8 @@ using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            SetBangFrame, BeginFrame,
                            VectorBuildFrame, VectorRefFrame,
                            VectorSetVecFrame, VectorSetValFrame,
-                           VectorLengthFrame, ApplyBuildFrame>;
+                           VectorLengthFrame, ApplyBuildFrame,
+                           LambdaBodyFrame, ProcArityFrame>;
 
 /// @brief Push eval for type checking
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
@@ -246,6 +252,28 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{ae->func.get(), env});
         break;
     }
+    case NodeKind::Lambda: {
+        auto *la = expr_cast<LambdaExpr>(e);
+        TypeEnv body_env = env;
+        std::vector<TypePtr> param_types;
+        // invariant: body_env extended with params[0..i), param_types filled
+        for (const auto &p : la->params) {
+            body_env[p.first] = p.second;
+            param_types.push_back(p.second);
+        }
+        stack.push_back(
+            LambdaBodyFrame{std::move(param_types), la->ret_type});
+        stack.push_back(EvalFrame{la->body.get(), std::move(body_env)});
+        break;
+    }
+    case NodeKind::ProcArity: {
+        auto *pa = expr_cast<ProcArityExpr>(e);
+        stack.push_back(ProcArityFrame{});
+        stack.push_back(EvalFrame{pa->expr.get(), env});
+        break;
+    }
+    default:
+        throw TypeError("type_check: unexpected node kind");
     }
 }
 
@@ -422,6 +450,18 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
                                              std::move(rest), ab->env});
             stack.push_back(EvalFrame{next, ab->env});
         }
+    } else if (auto *lbf = std::get_if<LambdaBodyFrame>(&frame)) {
+        TypePtr body_t = types.back(); types.pop_back();
+        if (*body_t != *lbf->ret_type) {
+            throw TypeError("lambda body type does not match return type");
+        }
+        types.push_back(fun_type(lbf->param_types, lbf->ret_type));
+    } else if (std::get_if<ProcArityFrame>(&frame) != nullptr) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_fun_type(t)) {
+            throw TypeError("procedure_arity requires a function");
+        }
+        types.push_back(int_type());
     }
 }
 

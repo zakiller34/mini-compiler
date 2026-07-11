@@ -77,6 +77,13 @@ std::string dump_cexpr(const CExpr &e) {
         for (const auto &a : ca->args) r += " " + dump_atom(a);
         return r + ")";
     }
+    if (const auto *ac = std::get_if<CAllocateClosureExpr>(&e)) {
+        return "(allocate-closure " + std::to_string(ac->len) + " " +
+               ac->type->dump() + " " + std::to_string(ac->arity) + ")";
+    }
+    if (const auto *pa = std::get_if<CProcArityExpr>(&e)) {
+        return "(procedure-arity " + dump_atom(pa->clos) + ")";
+    }
     return "?";
 }
 

@@ -56,6 +56,32 @@ TypePtr Parser::parse_type() {
     throw ParseError("expected type, got '" + cur_.text + "'");
 }
 
+/// @brief Parse comma-separated `IDENT ':' type` list (parens consumed by caller)
+/// @ensures result is params in source order
+std::vector<std::pair<std::string, TypePtr>> Parser::parse_params() {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    if (cur_.kind == TokenKind::RParen) {
+        return params;
+    }
+    // invariant: params has parsed params so far
+    // decreases: remaining tokens until ')'
+    while (true) {
+        if (cur_.kind != TokenKind::Ident) {
+            throw ParseError("expected parameter name");
+        }
+        std::string pname = cur_.text;
+        advance();
+        expect(TokenKind::Colon, "':'");
+        auto ptype = parse_type();
+        params.push_back({std::move(pname), std::move(ptype)});
+        if (cur_.kind != TokenKind::Comma) {
+            break;
+        }
+        advance();
+    }
+    return params;
+}
+
 /// @brief Parse function definition: fn name(params) : ret_type { body }
 DefNode Parser::parse_def() {
     expect(TokenKind::Fn, "'fn'");
@@ -65,30 +91,7 @@ DefNode Parser::parse_def() {
     std::string name = cur_.text;
     advance();
     expect(TokenKind::LParen, "'('");
-    std::vector<std::pair<std::string, TypePtr>> params;
-    if (cur_.kind != TokenKind::RParen) {
-        if (cur_.kind != TokenKind::Ident) {
-            throw ParseError("expected parameter name");
-        }
-        std::string pname = cur_.text;
-        advance();
-        expect(TokenKind::Colon, "':'");
-        auto ptype = parse_type();
-        params.push_back({std::move(pname), std::move(ptype)});
-        // invariant: params has parsed params so far
-        // decreases: remaining tokens until ')'
-        while (cur_.kind == TokenKind::Comma) {
-            advance();
-            if (cur_.kind != TokenKind::Ident) {
-                throw ParseError("expected parameter name");
-            }
-            pname = cur_.text;
-            advance();
-            expect(TokenKind::Colon, "':'");
-            ptype = parse_type();
-            params.push_back({std::move(pname), std::move(ptype)});
-        }
-    }
+    auto params = parse_params();
     expect(TokenKind::RParen, "')'");
     expect(TokenKind::Colon, "':'");
     auto ret_type = parse_type();
@@ -219,12 +222,30 @@ std::unique_ptr<Expr> Parser::parse_unary() {
     return expr;
 }
 
-/// @brief Parse postfix: primary ('[' INT ']' ('=' expr)? )*
+/// @brief Parse postfix: primary ('[' INT ']' ('=' expr)? | '(' args ')')*
 std::unique_ptr<Expr> Parser::parse_postfix() {
     auto expr = parse_primary();
-    // invariant: expr accumulates postfix subscript/set ops
+    // invariant: expr accumulates postfix subscript/set/application ops
     // decreases: remaining tokens
-    while (cur_.kind == TokenKind::LBracket) {
+    while (cur_.kind == TokenKind::LBracket ||
+           cur_.kind == TokenKind::LParen) {
+        if (cur_.kind == TokenKind::LParen) {
+            advance();
+            std::vector<std::unique_ptr<Expr>> args;
+            if (cur_.kind != TokenKind::RParen) {
+                args.push_back(parse_expr());
+                // invariant: args has parsed args so far
+                // decreases: remaining tokens until ')'
+                while (cur_.kind == TokenKind::Comma) {
+                    advance();
+                    args.push_back(parse_expr());
+                }
+            }
+            expect(TokenKind::RParen, "')'");
+            expr = std::make_unique<ApplyExpr>(
+                std::move(expr), std::move(args));
+            continue;
+        }
         advance();
         if (cur_.kind != TokenKind::IntLit) {
             throw ParseError("expected integer index in []");
@@ -261,23 +282,6 @@ std::unique_ptr<Expr> Parser::parse_primary() {
     case TokenKind::Ident: {
         std::string name = cur_.text;
         advance();
-        if (cur_.kind == TokenKind::LParen) {
-            advance();
-            std::vector<std::unique_ptr<Expr>> args;
-            if (cur_.kind != TokenKind::RParen) {
-                args.push_back(parse_expr());
-                // invariant: args has parsed args so far
-                // decreases: remaining tokens until ')'
-                while (cur_.kind == TokenKind::Comma) {
-                    advance();
-                    args.push_back(parse_expr());
-                }
-            }
-            expect(TokenKind::RParen, "')'");
-            return std::make_unique<ApplyExpr>(
-                std::make_unique<VarExpr>(std::move(name)),
-                std::move(args));
-        }
         return std::make_unique<VarExpr>(std::move(name));
     }
     case TokenKind::Read: {
@@ -358,6 +362,26 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         auto vec = parse_expr();
         expect(TokenKind::RParen, "')'");
         return std::make_unique<VectorLengthExpr>(std::move(vec));
+    }
+    case TokenKind::Lambda: {
+        advance();
+        expect(TokenKind::LParen, "'('");
+        auto params = parse_params();
+        expect(TokenKind::RParen, "')'");
+        expect(TokenKind::Colon, "':'");
+        auto ret = parse_type();
+        expect(TokenKind::LBrace, "'{'");
+        auto body = parse_expr();
+        expect(TokenKind::RBrace, "'}'");
+        return std::make_unique<LambdaExpr>(
+            std::move(params), std::move(ret), std::move(body));
+    }
+    case TokenKind::ProcArity: {
+        advance();
+        expect(TokenKind::LParen, "'('");
+        auto inner = parse_expr();
+        expect(TokenKind::RParen, "')'");
+        return std::make_unique<ProcArityExpr>(std::move(inner));
     }
     case TokenKind::Void: {
         advance();

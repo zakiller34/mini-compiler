@@ -158,7 +158,12 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
         for (auto &[lbl, blk] : new_def.blocks) {
             std::vector<x86::Instr> new_instrs;
             for (auto &instr : blk.instrs) {
-                if (std::holds_alternative<x86::TailJmp>(instr)) {
+                if (const auto *tj = std::get_if<x86::TailJmp>(&instr)) {
+                    // The target may live in a callee-saved register that the
+                    // epilogue restores; stash it in %rax (reserved, not
+                    // popped, and overwritten by the callee anyway) first.
+                    new_instrs.push_back(
+                        x86::Movq{tj->func, x86::RegArg{x86::Reg::Rax}});
                     if (xdef.stack_space > 0) {
                         new_instrs.push_back(x86::Addq{
                             x86::Imm{xdef.stack_space},
@@ -171,6 +176,9 @@ x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
                     }
                     new_instrs.push_back(x86::Popq{
                         x86::RegArg{x86::Reg::Rbp}});
+                    new_instrs.push_back(x86::TailJmp{
+                        x86::RegArg{x86::Reg::Rax}, tj->arity});
+                    continue;
                 }
                 new_instrs.push_back(std::move(instr));
             }

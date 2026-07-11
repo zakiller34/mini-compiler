@@ -1,5 +1,6 @@
 #include "patch_instructions.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace mc {
@@ -9,6 +10,14 @@ namespace {
 bool is_mem(const x86::Arg &a) {
     return std::holds_alternative<x86::Deref>(a) ||
            std::holds_alternative<x86::GlobalArg>(a);
+}
+
+/// @brief True if a is an immediate that does not fit a signed 32-bit field
+///        (x86 movq imm->mem only allows sign-extended 32-bit immediates).
+bool is_big_imm(const x86::Arg &a) {
+    const auto *i = std::get_if<x86::Imm>(&a);
+    if (i == nullptr) return false;
+    return i->value < INT32_MIN || i->value > INT32_MAX;
 }
 
 bool args_equal(const x86::Arg &a, const x86::Arg &b) {
@@ -45,7 +54,10 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
 
     if (const auto *m = std::get_if<x86::Movq>(&instr)) {
         if (args_equal(m->src, m->dst)) return;
-        if (is_mem(m->src) && is_mem(m->dst)) {
+        if ((is_mem(m->src) && is_mem(m->dst)) ||
+            (is_big_imm(m->src) && is_mem(m->dst))) {
+            // Two-memory move, or a 64-bit immediate into memory: route via
+            // %rax (movq imm->reg assembles as movabs, which is allowed).
             out.push_back(x86::Movq{m->src, rax});
             out.push_back(x86::Movq{rax, m->dst});
             return;

@@ -18,7 +18,8 @@ enum class NodeKind {
   While, SetBang, Begin, Void, Get,
   Vector, VectorRef, VectorSet, VectorLength,
   Allocate, Collect, GlobalValue,
-  Apply, FunRef
+  Apply, FunRef,
+  Lambda, ProcArity, Closure, AllocateClosure
 };
 
 /// Base class for all expressions in L_While.
@@ -263,6 +264,56 @@ public:
   explicit FunRefExpr(std::string n, int64_t a)
       : name(std::move(n)), arity(a) {}
   NodeKind kind() const override { return NodeKind::FunRef; }
+  std::string dump() const override;
+};
+
+/// @brief Anonymous function: lambda (p:t, ...) : ret { body }
+class LambdaExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Lambda;
+  std::vector<std::pair<std::string, TypePtr>> params;
+  TypePtr ret_type;
+  std::unique_ptr<Expr> body;
+  LambdaExpr(std::vector<std::pair<std::string, TypePtr>> p, TypePtr r,
+             std::unique_ptr<Expr> b)
+      : params(std::move(p)), ret_type(std::move(r)), body(std::move(b)) {}
+  NodeKind kind() const override { return NodeKind::Lambda; }
+  std::string dump() const override;
+};
+
+/// @brief procedure_arity(e): arity of a function/closure value
+class ProcArityExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::ProcArity;
+  std::unique_ptr<Expr> expr;
+  explicit ProcArityExpr(std::unique_ptr<Expr> e) : expr(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::ProcArity; }
+  std::string dump() const override;
+};
+
+/// @brief Closure tuple (introduced by convert_to_closures):
+///        elems[0] = FunRef, elems[1..] = captured free vars
+class ClosureExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Closure;
+  int64_t arity;
+  std::vector<std::unique_ptr<Expr>> elems;
+  ClosureExpr(int64_t a, std::vector<std::unique_ptr<Expr>> e)
+      : arity(a), elems(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::Closure; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by expose_allocation: allocate_closure(len, type, arity)
+class AllocateClosureExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::AllocateClosure;
+  int64_t len;
+  TypePtr type;
+  int64_t arity;
+  AllocateClosureExpr(int64_t l, TypePtr t, int64_t a)
+      : len(l), type(std::move(t)), arity(a) {}
+  NodeKind kind() const override { return NodeKind::AllocateClosure; }
   std::string dump() const override;
 };
 

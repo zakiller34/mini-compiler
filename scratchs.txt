@@ -1,0 +1,2 @@
+
+Use an enum inside of the expression object. So to avoid all the dynamic casts. When an expression is created, it should have the enum value.
