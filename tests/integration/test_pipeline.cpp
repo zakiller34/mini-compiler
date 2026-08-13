@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ast.h"
 #include "ir/c_ir.h"
@@ -627,4 +630,80 @@ TEST(Pipeline, DynTypePredicateLowersToTagTest) {
   auto asm_str = run_pipeline_dyn(std::move(body));
   EXPECT_NE(asm_str.find("andq $7"), std::string::npos);
   EXPECT_NE(asm_str.find("cmpq $1"), std::string::npos);
+}
+
+/// Extract the parameter-mov run at the head of a function's start block.
+///
+/// These are the movs whose sources are the System V argument registers taken
+/// in order; the run ends as soon as that pattern breaks, so body code that
+/// happens to be a register-to-register mov is not swallowed.
+static std::vector<std::pair<std::string, std::string>>
+param_movs(const std::string &asm_text, const std::string &label) {
+  static const std::vector<std::string> kArgRegs = {"rdi", "rsi", "rdx",
+                                                    "rcx", "r8", "r9"};
+  std::vector<std::pair<std::string, std::string>> movs;
+  auto pos = asm_text.find(label + ":\n");
+  if (pos == std::string::npos) return movs;
+  pos += label.size() + 2;
+  // decreases kArgRegs.size() - movs.size()
+  while (pos < asm_text.size() && movs.size() < kArgRegs.size()) {
+    auto eol = asm_text.find('\n', pos);
+    if (eol == std::string::npos) break;
+    std::string line = asm_text.substr(pos, eol - pos);
+    if (line.rfind("    movq %", 0) != 0) break;
+    auto comma = line.find(", %");
+    if (comma == std::string::npos) break;
+    std::string src = line.substr(10, comma - 10);
+    std::string dst = line.substr(comma + 3);
+    if (src.find('(') != std::string::npos ||
+        dst.find('(') != std::string::npos) break;
+    if (src != kArgRegs[movs.size()]) break;
+    movs.emplace_back(src, dst);
+    pos = eol + 1;
+  }
+  return movs;
+}
+
+/// Regression: the function entry sequence is a parallel move.
+///
+/// select_instructions prefixes a function's start block with
+///   movq %rdi, p0 ; movq %rsi, p1 ; movq %rdx, p2 ; ...
+/// Performed in order these can clobber, and liveness never noticed because it
+/// only tracks variables — it could not see that %rdx still held p2 while p1
+/// was being written. The allocator duly gave p1 the home %rdx, and
+/// `fn add(x, y) { x + y }` compiled so that `add(20, 22)` returned 40. That
+/// survived Phases 7 and 8 and a 287-case suite, because nothing compared the
+/// compiled output against the interpreter.
+///
+/// The invariant checked here: within the entry mov run, no instruction reads a
+/// register that an earlier instruction in the same run has already written.
+TEST(Pipeline, FunctionEntryMovsDoNotClobber) {
+  // fn add(x: Int, y: Int) : Int { x + y }
+  std::vector<std::pair<std::string, TypePtr>> params = {
+      {"x", int_type()}, {"y", int_type()}};
+  auto body = std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                           std::make_unique<VarExpr>("x"),
+                                           std::make_unique<VarExpr>("y"));
+  std::vector<DefNode> defs;
+  defs.push_back(
+      DefNode{"add", std::move(params), int_type(), std::move(body)});
+
+  std::vector<std::unique_ptr<Expr>> args;
+  args.push_back(std::make_unique<IntExpr>(20));
+  args.push_back(std::make_unique<IntExpr>(22));
+  auto call = std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("add"),
+                                          std::move(args));
+
+  auto asm_text = run_pipeline_full(std::move(call), std::move(defs));
+  auto movs = param_movs(asm_text, "add_start");
+  ASSERT_GE(movs.size(), 2u) << "expected an entry mov run:\n" << asm_text;
+
+  std::set<std::string> written;
+  for (const auto &[src, dst] : movs) {
+    EXPECT_EQ(written.count(src), 0u)
+        << "entry sequence reads %" << src << " after writing it — the "
+        << "parallel move was performed sequentially:\n"
+        << asm_text;
+    written.insert(dst);
+  }
 }

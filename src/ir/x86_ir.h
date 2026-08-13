@@ -61,6 +61,10 @@ struct Block { std::vector<Instr> instrs; };
 
 struct X86FunctionDef {
   std::string name;
+  /// Parameter names in ABI order. Needed by assign_homes: parameter i is
+  /// loaded from arg register i, so its home must avoid the arg registers that
+  /// still hold parameters i+1.. at that point.
+  std::vector<std::string> params;
   std::map<std::string, Block> blocks;
   int64_t stack_space = 0;
   int64_t root_stack_space = 0;

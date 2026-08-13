@@ -19,6 +19,17 @@ constexpr int64_t kWordSize = 8;
 /// @brief Required stack alignment in bytes (System V AMD64 ABI)
 constexpr int64_t kAlignment = 16;
 
+} // namespace
+
+const std::vector<x86::Reg> &arg_regs() {
+    static const std::vector<x86::Reg> kArgRegs = {
+        x86::Reg::Rdi, x86::Reg::Rsi, x86::Reg::Rdx,
+        x86::Reg::Rcx, x86::Reg::R8,  x86::Reg::R9};
+    return kArgRegs;
+}
+
+namespace {
+
 x86::Arg replace_arg(const x86::Arg &a,
                      const std::map<std::string, x86::Arg> &homes) {
     if (const auto *v = std::get_if<x86::VarArg>(&a)) {
@@ -129,7 +140,8 @@ const std::set<x86::Reg> callee_saved = {x86::Reg::Rbx, x86::Reg::R12,
 // Dispatch over a closed node/instruction/frame set: exempt from the
 // 30-line rule (see CLAUDE.md).
 // NOLINTNEXTLINE(readability-function-size)
-x86::X86Program assign_homes(const x86::X86Program &prog) {
+x86::X86Program assign_homes(const x86::X86Program &prog,
+                             const std::vector<std::string> *params) {
     // Multi-block liveness analysis
     auto all_liveness = analyze_liveness_program(prog);
 
@@ -151,6 +163,24 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
 
     auto graph = build_interference(all_instrs, all_live_after,
                                      &prog.var_types);
+
+    // The function entry sequence `movq %rdi,p0; movq %rsi,p1; ...` is a
+    // parallel move executed sequentially. Liveness only tracks VarArgs, so it
+    // cannot see that %rsi still holds p1 while p0 is being written; without
+    // the edges below the allocator is free to give p0 the home %rsi and
+    // destroy p1. Precolour instead: params[i] interferes with every argument
+    // register that still holds a later parameter.
+    if (params != nullptr) {
+        const auto &aregs = arg_regs();
+        // invariant: params[0..i) constrained against their live successors
+        for (size_t i = 0; i < params->size() && i < aregs.size(); ++i) {
+            // decreases aregs.size() - j
+            for (size_t j = i + 1; j < params->size() && j < aregs.size(); ++j) {
+                graph.add_edge(Location{(*params)[i]}, Location{aregs[j]});
+            }
+        }
+    }
+
     auto coloring = color_graph(graph, num_allocable_regs());
 
     // Collect all vars
@@ -225,7 +255,7 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
         x86::X86Program tmp;
         tmp.blocks = xdef.blocks;
         tmp.var_types = xdef.var_types;
-        auto assigned = assign_homes(tmp);
+        auto assigned = assign_homes(tmp, &xdef.params);
         x86::X86FunctionDef new_def;
         new_def.name = xdef.name;
         new_def.blocks = std::move(assigned.blocks);

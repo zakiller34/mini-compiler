@@ -324,6 +324,7 @@ x86::X86Program select_instructions(const cir::CProgram &prog) {
     for (const auto &cdef : prog.defs) {
         x86::X86FunctionDef xdef;
         xdef.name = cdef.name;
+        xdef.params = cdef.params;
         xdef.var_types = cdef.var_types;
         for (const auto &[label, blk] : cdef.blocks) {
             xdef.blocks[label] = select_block(blk);

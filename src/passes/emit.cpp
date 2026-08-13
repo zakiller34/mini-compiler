@@ -124,9 +124,11 @@ std::string emit(const x86::X86Program &prog) {
         }
     }
 
-    // Emit main first
+    // Emit main first. It gets the same 8-byte alignment as the function defs
+    // above; it was previously the one entry point emitted without it.
     auto it = prog.blocks.find("main");
     if (it != prog.blocks.end()) {
+        result += "    .align 8\n";
         result += emit_block("main", it->second);
     }
 

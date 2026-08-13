@@ -31,7 +31,15 @@ cir::Atom make_atom(const Expr *e) {
     case NodeKind::Var:
         return cir::VarAtom{expr_cast<VarExpr>(e)->name};
     default:
-        return cir::VarAtom{expr_cast<VarExpr>(e)->name};
+        // Anything else reaching here means RCO failed to atomize this operand.
+        // The previous `expr_cast<VarExpr>` fallthrough reinterpreted the node
+        // as a VarExpr regardless of its actual kind: a debug assert at best,
+        // undefined behaviour in a release build. Fail loudly instead.
+        throw ExplicateError(
+            "make_atom: non-atomic operand of kind " +
+            std::to_string(static_cast<int>(e->kind())) +
+            " reached explicate_control; remove_complex_operands should have "
+            "let-bound it");
     }
 }
 
