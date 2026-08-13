@@ -43,6 +43,19 @@ def reveal_expr (fmap : FunMap) : Expr → Expr
   | .lambda ps rt b => .lambda ps rt (reveal_expr fmap b)
   | .procArity e => .procArity (reveal_expr fmap e)
   | .closure a es => .closure a (es.map (reveal_expr fmap))
+  -- Phase 8 (L_Any): these carry sub-expressions and must be traversed, not
+  -- treated as leaves. Omitting them left this module failing to elaborate.
+  | .inject e t => .inject (reveal_expr fmap e) t
+  | .project e t => .project (reveal_expr fmap e) t
+  | .typePred p e => .typePred p (reveal_expr fmap e)
+  | .anyVectorRef v i => .anyVectorRef (reveal_expr fmap v) (reveal_expr fmap i)
+  | .anyVectorSet v i x =>
+    .anyVectorSet (reveal_expr fmap v) (reveal_expr fmap i) (reveal_expr fmap x)
+  | .anyVectorLength v => .anyVectorLength (reveal_expr fmap v)
+  | .makeAny e tag => .makeAny (reveal_expr fmap e) tag
+  | .tagOfAny e => .tagOfAny (reveal_expr fmap e)
+  | .valueOf e t => .valueOf (reveal_expr fmap e) t
+  | .exit_ => .exit_
 
 /-- Build FunMap from defs. -/
 def build_fun_map (defs : List DefNode) : FunMap :=
@@ -54,8 +67,35 @@ def reveal_functions (p : Program) : Program :=
   let defs' := p.defs.map (fun d => { d with body := reveal_expr fmap d.body })
   { defs := defs', body := reveal_expr fmap p.body }
 
-/-- After reveal_functions, no VarExpr references a function name. -/
-theorem reveal_functions_no_var_for_fns : ∀ _p : Program, True := by
-  intro _; trivial
+/-- A failed lookup means the name is not a known function. -/
+theorem fun_lookup_none (fmap : FunMap) (n : String)
+    (h : fun_lookup fmap n = none) : (fmap.map (·.1)).contains n = false := by
+  induction fmap with
+  | nil => rfl
+  | cons hd tl ih =>
+    simp only [fun_lookup] at h
+    split at h
+    · exact absurd h (by simp)
+    · rename_i hne
+      simp only [List.map_cons, List.contains_cons, ih h, Bool.or_false]
+      simp only [beq_iff_eq] at hne ⊢
+      exact beq_eq_false_iff_ne.mpr (fun hc => hne hc.symm)
+
+/-- After reveal_functions, no `var` node references a function name — every
+    such reference has become a `funRef`. -/
+theorem reveal_functions_no_var_for_fns (fmap : FunMap) (e : Expr) :
+    noVarIn (fmap.map (·.1)) (reveal_expr fmap e) = true := by
+  induction e using Expr.rec
+    (motive_2 := fun es =>
+      noVarInL (fmap.map (·.1)) (es.map (reveal_expr fmap)) = true) with
+  | var n =>
+    cases h : fun_lookup fmap n with
+    | none =>
+      simp only [reveal_expr, h, noVarIn, fun_lookup_none fmap n h,
+        Bool.not_false]
+    | some a => simp [reveal_expr, noVarIn, h]
+  | nil => simp [noVarInL]
+  | cons e es ih ihs => simp [noVarInL, ih, ihs]
+  | _ => simp_all [reveal_expr, noVarIn]
 
 end MiniCompiler

@@ -146,15 +146,14 @@ def type_check_env : TypeEnv → Expr → Option Ty
 /-- Top-level type check. -/
 def type_check (e : Expr) : Option Ty := type_check_env [] e
 
-/-- Progress: well-typed expressions can step or are values. -/
-theorem type_progress : ∀ e : Expr, ∀ τ : Ty,
-    type_check e = some τ → True := by
-  intros; trivial
-
-/-- Preservation: evaluation preserves types. -/
-theorem type_preservation : ∀ e : Expr, ∀ τ : Ty,
-    type_check e = some τ → True := by
-  intros; trivial
+-- NOTE: `type_progress` and `type_preservation` are deliberately absent.
+--
+-- Both previously stood here as `type_check e = some τ → True`, which asserts
+-- nothing. Neither can even be *stated* without an operational semantics:
+-- progress needs a small-step relation (`e ↦ e'`) and preservation needs the
+-- notion of a value. This development has no evaluator — see the "What is and
+-- is not proved" section of the README. Stating them honestly is a multi-week
+-- project, and a vacuous stand-in is not a down payment on it.
 
 /-- While always produces Void type. -/
 theorem while_type_void : ∀ env c body τ,

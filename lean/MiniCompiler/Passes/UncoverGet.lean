@@ -23,6 +23,22 @@ def collect_mutable_vars : Expr → List String
   | .vectorSet v _ e => collect_mutable_vars v ++ collect_mutable_vars e
   | .vectorLength v => collect_mutable_vars v
   | .apply f args => collect_mutable_vars f ++ args.flatMap collect_mutable_vars
+  -- `replace_vars` descends into lambdas, so failing to collect here meant a
+  -- `set!` inside a lambda body was never recognised as a mutable variable.
+  | .lambda _ _ b => collect_mutable_vars b
+  | .procArity e => collect_mutable_vars e
+  | .closure _ es => es.flatMap collect_mutable_vars
+  -- Phase 8 (L_Any)
+  | .inject e _ => collect_mutable_vars e
+  | .project e _ => collect_mutable_vars e
+  | .typePred _ e => collect_mutable_vars e
+  | .anyVectorRef v i => collect_mutable_vars v ++ collect_mutable_vars i
+  | .anyVectorSet v i x =>
+    collect_mutable_vars v ++ collect_mutable_vars i ++ collect_mutable_vars x
+  | .anyVectorLength v => collect_mutable_vars v
+  | .makeAny e _ => collect_mutable_vars e
+  | .tagOfAny e => collect_mutable_vars e
+  | .valueOf e _ => collect_mutable_vars e
   | _ => []
 
 /-- Replace VarExpr with GetExpr for mutable variables. -/
@@ -49,16 +65,39 @@ def replace_vars (mvars : List String) : Expr → Expr
   | .lambda ps rt b => .lambda ps rt (replace_vars mvars b)
   | .procArity e => .procArity (replace_vars mvars e)
   | .closure a es => .closure a (es.map (replace_vars mvars))
-  -- Phase 8 (L_Any) nodes bind no variables
-  | e => e
+  -- Phase 8 (L_Any): sub-expressions here can mention mutable variables too.
+  | .inject e t => .inject (replace_vars mvars e) t
+  | .project e t => .project (replace_vars mvars e) t
+  | .typePred p e => .typePred p (replace_vars mvars e)
+  | .anyVectorRef v i => .anyVectorRef (replace_vars mvars v) (replace_vars mvars i)
+  | .anyVectorSet v i x =>
+    .anyVectorSet (replace_vars mvars v) (replace_vars mvars i) (replace_vars mvars x)
+  | .anyVectorLength v => .anyVectorLength (replace_vars mvars v)
+  | .makeAny e tag => .makeAny (replace_vars mvars e) tag
+  | .tagOfAny e => .tagOfAny (replace_vars mvars e)
+  | .valueOf e t => .valueOf (replace_vars mvars e) t
+  | .exit_ => .exit_
 
 /-- Top-level uncover_get. -/
 def uncover_get (p : Program) : Program :=
   let mvars := collect_mutable_vars p.body
   { body := replace_vars mvars p.body }
 
-/-- Output has no VarExpr for mutable vars. -/
-theorem uncover_get_no_var_for_mutable : ∀ _p : Program,
-    True := by intro _; trivial
+/-- After `uncover_get`, no `var` node names a mutable variable — every read of
+    a `set!` target has become a `get`, which is what lets later passes treat
+    `var` as immutable. -/
+theorem uncover_get_no_var_for_mutable (p : Program) :
+    noVarIn (collect_mutable_vars p.body) (uncover_get p).body = true := by
+  simp only [uncover_get]
+  generalize collect_mutable_vars p.body = mvars
+  induction p.body using Expr.rec
+    (motive_2 := fun es => noVarInL mvars (es.map (replace_vars mvars)) = true) with
+  | var n =>
+    by_cases h : n ∈ mvars
+    · simp [replace_vars, h, noVarIn]
+    · simp [replace_vars, h, noVarIn]
+  | nil => simp [noVarInL]
+  | cons e es ih ihs => simp [noVarInL, ih, ihs]
+  | _ => simp_all [replace_vars, noVarIn]
 
 end MiniCompiler

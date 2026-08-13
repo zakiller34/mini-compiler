@@ -5,6 +5,8 @@ import MiniCompiler.Passes.UncoverGet
 import MiniCompiler.Passes.FreeVars
 import MiniCompiler.Passes.ConvertAssignments
 import MiniCompiler.Passes.ConvertToClosures
+import MiniCompiler.Passes.RevealFunctions
+import MiniCompiler.Passes.LimitFunctions
 import MiniCompiler.Passes.RCO
 import MiniCompiler.Passes.ExplicateControl
 import MiniCompiler.Passes.SelectInstructions

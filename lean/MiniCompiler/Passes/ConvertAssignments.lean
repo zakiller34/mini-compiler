@@ -27,6 +27,16 @@ def collectAssigned : Expr → List String
   | .lambda _ _ b => collectAssigned b
   | .procArity e => collectAssigned e
   | .closure _ es => es.flatMap collectAssigned
+  -- Phase 8 (L_Any)
+  | .inject e _ => collectAssigned e
+  | .project e _ => collectAssigned e
+  | .typePred _ e => collectAssigned e
+  | .anyVectorRef v i => collectAssigned v ++ collectAssigned i
+  | .anyVectorSet v i x => collectAssigned v ++ collectAssigned i ++ collectAssigned x
+  | .anyVectorLength v => collectAssigned v
+  | .makeAny e _ => collectAssigned e
+  | .tagOfAny e => collectAssigned e
+  | .valueOf e _ => collectAssigned e
   | _ => []
 
 /-- All vars captured (free) by any lambda in `e`. -/
@@ -47,14 +57,33 @@ def collectCaptured : Expr → List String
   | .apply f args => collectCaptured f ++ args.flatMap collectCaptured
   | .procArity e => collectCaptured e
   | .closure _ es => es.flatMap collectCaptured
+  -- Phase 8 (L_Any): a lambda nested under one of these was invisible here, so
+  -- its captures were never boxed.
+  | .inject e _ => collectCaptured e
+  | .project e _ => collectCaptured e
+  | .typePred _ e => collectCaptured e
+  | .anyVectorRef v i => collectCaptured v ++ collectCaptured i
+  | .anyVectorSet v i x => collectCaptured v ++ collectCaptured i ++ collectCaptured x
+  | .anyVectorLength v => collectCaptured v
+  | .makeAny e _ => collectCaptured e
+  | .tagOfAny e => collectCaptured e
+  | .valueOf e _ => collectCaptured e
   | _ => []
 
 /-- Variables that must be boxed: assigned AND captured. -/
 def toBox (e : Expr) : List String :=
   (collectAssigned e).filter (collectCaptured e).contains
 
-/-- Assignment conversion preserves evaluation semantics. -/
-theorem convert_assignments_preserves_semantics : ∀ _p : Program, True := by
-  intro _; trivial
+/-- A variable is boxed exactly when it is both assigned and captured. This is
+    the decision rule the C++ pass implements (`src/passes/convert_assignments.cpp`);
+    boxing anything less breaks shared mutation through a closure, boxing
+    anything more costs a needless heap cell. -/
+theorem toBox_correct (e : Expr) (n : String) :
+    n ∈ toBox e ↔ n ∈ collectAssigned e ∧ n ∈ collectCaptured e := by
+  simp [toBox, List.mem_filter]
+
+-- NOTE: `convert_assignments_preserves_semantics` is deliberately absent — it
+-- needs an operational semantics this development does not have, and the
+-- boxing rewrite itself is not modelled in Lean. See the README scope table.
 
 end MiniCompiler

@@ -87,16 +87,102 @@ def uniquify_expr (env : RenameEnv) (counter : Nat) : Expr → Expr × Nat
       let (e', c') := uniquify_expr env acc.2 e
       (acc.1 ++ [e'], c')) ([], counter)
     (.closure a es', c)
-  -- Phase 8 (L_Any) nodes bind no variables
-  | e => (e, counter)
+  -- Phase 8 (L_Any). These bind no variables, but they *contain* variables, so
+  -- a catch-all `| e => (e, counter)` left them un-renamed.
+  | .inject e t =>
+    let (e', c) := uniquify_expr env counter e
+    (.inject e' t, c)
+  | .project e t =>
+    let (e', c) := uniquify_expr env counter e
+    (.project e' t, c)
+  | .typePred p e =>
+    let (e', c) := uniquify_expr env counter e
+    (.typePred p e', c)
+  | .anyVectorRef v i =>
+    let (v', c1) := uniquify_expr env counter v
+    let (i', c2) := uniquify_expr env c1 i
+    (.anyVectorRef v' i', c2)
+  | .anyVectorSet v i x =>
+    let (v', c1) := uniquify_expr env counter v
+    let (i', c2) := uniquify_expr env c1 i
+    let (x', c3) := uniquify_expr env c2 x
+    (.anyVectorSet v' i' x', c3)
+  | .anyVectorLength v =>
+    let (v', c) := uniquify_expr env counter v
+    (.anyVectorLength v', c)
+  | .makeAny e tag =>
+    let (e', c) := uniquify_expr env counter e
+    (.makeAny e' tag, c)
+  | .tagOfAny e =>
+    let (e', c) := uniquify_expr env counter e
+    (.tagOfAny e', c)
+  | .valueOf e t =>
+    let (e', c) := uniquify_expr env counter e
+    (.valueOf e' t, c)
+  | .exit_ => (.exit_, counter)
 
 /-- Top-level uniquify. -/
 def uniquify (p : Program) : Program :=
   let (body', _) := uniquify_expr [] 1 p.body
   { body := body' }
 
-/-- All let-bound names in uniquified program are distinct. -/
-theorem uniquify_no_shadowing : ∀ _p : Program, True := by
-  intro _; trivial
+-- Every name bound by a `let`, in source order.
+mutual
+/-- Names bound by a `let` anywhere in `e`. -/
+def letBoundNames : Expr → List String
+  | .let_ v i b => v :: letBoundNames i ++ letBoundNames b
+  | .unary _ e => letBoundNames e
+  | .binary _ l r => letBoundNames l ++ letBoundNames r
+  | .if_ c t e => letBoundNames c ++ letBoundNames t ++ letBoundNames e
+  | .while_ c b => letBoundNames c ++ letBoundNames b
+  | .set_ _ e => letBoundNames e
+  | .begin es => letBoundNamesL es
+  | .vector_ es => letBoundNamesL es
+  | .vectorRef v _ => letBoundNames v
+  | .vectorSet v _ e => letBoundNames v ++ letBoundNames e
+  | .vectorLength v => letBoundNames v
+  | .apply f args => letBoundNames f ++ letBoundNamesL args
+  | .lambda _ _ b => letBoundNames b
+  | .procArity e => letBoundNames e
+  | .closure _ es => letBoundNamesL es
+  | .inject e _ => letBoundNames e
+  | .project e _ => letBoundNames e
+  | .typePred _ e => letBoundNames e
+  | .anyVectorRef v i => letBoundNames v ++ letBoundNames i
+  | .anyVectorSet v i x => letBoundNames v ++ letBoundNames i ++ letBoundNames x
+  | .anyVectorLength v => letBoundNames v
+  | .makeAny e _ => letBoundNames e
+  | .tagOfAny e => letBoundNames e
+  | .valueOf e _ => letBoundNames e
+  | _ => []
+
+/-- Pointwise lifting of `letBoundNames` to a list of sub-expressions. -/
+def letBoundNamesL : List Expr → List String
+  | [] => []
+  | e :: es => letBoundNames e ++ letBoundNamesL es
+end
+
+/-- After uniquify, no two `let` bindings share a name — so no scope shadows
+    another and every variable reference resolves unambiguously.
+
+    TRACKED `sorry`. The proof needs three ingredients: monotonicity of the
+    counter (see `uniquify_counter_mono` below), the invariant that every
+    generated name carries a suffix drawn from the half-open interval consumed
+    by that subtree, and injectivity of `v ++ "." ++ toString k` in `k`. The
+    last is the hard one without Mathlib's `String`/`Nat.toString` lemmas.
+    Listed in `SORRY_ALLOWLIST`. -/
+theorem uniquify_no_shadowing (p : Program) :
+    (letBoundNames (uniquify p).body).Nodup := by
+  sorry
+
+/-- The counter never decreases: a subtree only ever consumes fresh numbers.
+
+    TRACKED `sorry`, and the first of the three ingredients above. The
+    structural cases are immediate; what it needs is a companion lemma for the
+    `foldl` used by `begin`/`vector_`/`apply`/`closure`, stating that the fold
+    is monotone in its accumulator. Listed in `SORRY_ALLOWLIST`. -/
+theorem uniquify_counter_mono (e : Expr) :
+    ∀ (env : RenameEnv) (c : Nat), c ≤ (uniquify_expr env c e).2 := by
+  sorry
 
 end MiniCompiler

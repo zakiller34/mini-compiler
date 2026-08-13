@@ -53,8 +53,9 @@ structure CProgram where
 /-- Explicate control: AST → C_Var IR with basic blocks. -/
 def explicate_control (p : Program) : CProgram := sorry
 
-/-- Start block exists in output. -/
-theorem explicate_has_start : ∀ p : Program,
-    True := sorry
+-- NOTE: no `explicate_has_start` theorem here, deliberately. It previously read
+-- `∀ p : Program, True := sorry` — vacuous *and* unproved, about a `def` that is
+-- itself `sorry`. No theorem about a `sorry`d definition can carry meaning, so
+-- the honest move is to state nothing until `explicate_control` is modelled.
 
 end MiniCompiler

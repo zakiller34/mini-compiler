@@ -16,7 +16,10 @@ cd build && ctest --output-on-failure
 
 ## Lean
 cd lean && lake build
-Local deps: mathlib4 + cslib from `../../lean-proofs/` (no network fetch).
+No dependencies — core Lean 4 only (no Mathlib, no cslib, no network fetch).
+`lake build` also runs `Hygiene.lean`, which fails the build on a theorem whose
+conclusion is vacuous, on an unlisted `sorry`, or on `native_decide`.
+`lean/scripts/check_honesty.sh` is the fast pre-commit version.
 
 ## Lint & format
 - clang-tidy runs on every build (CMAKE_CXX_CLANG_TIDY). Fix all warnings before commit.
@@ -44,7 +47,7 @@ runtime/          runtime.c (read_int, print_int, GC: initialize, collect)
 tests/unit/       Google Test per-pass: test_{pass}.cpp
 tests/integration/ end-to-end pipeline tests
 tests/programs/   .mc files in phaseN/ subdirs
-lean/             lakefile.lean (local mathlib4+cslib), MiniCompiler/*.lean
+lean/             lakefile.lean, MiniCompiler/*.lean, Hygiene.lean, scripts/
 .changeset/       per-commit changelogs
 ```
 

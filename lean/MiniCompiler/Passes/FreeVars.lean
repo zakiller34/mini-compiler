@@ -29,10 +29,28 @@ def freeVars : Expr → List String
   | .apply f args => freeVars f ++ args.flatMap freeVars
   | .procArity e => freeVars e
   | .closure _ es => es.flatMap freeVars
+  -- Phase 8 (L_Any). Missing these under-approximated the free-variable set,
+  -- which would silently drop captures during closure conversion.
+  | .inject e _ => freeVars e
+  | .project e _ => freeVars e
+  | .typePred _ e => freeVars e
+  | .anyVectorRef v i => freeVars v ++ freeVars i
+  | .anyVectorSet v i x => freeVars v ++ freeVars i ++ freeVars x
+  | .anyVectorLength v => freeVars v
+  | .makeAny e _ => freeVars e
+  | .tagOfAny e => freeVars e
+  | .valueOf e _ => freeVars e
   | _ => []
 
-/-- Free-variable analysis is complete: every use not bound in `e` is found. -/
-theorem free_vars_complete : ∀ _e : Expr, True := by
-  intro _; trivial
+/-- `let` binds its variable: it is not free in the result unless the
+    initialiser mentions it. -/
+theorem freeVars_let_binder (v : String) (i b : Expr) (h : v ∉ freeVars i) :
+    v ∉ freeVars (.let_ v i b) := by
+  simp [freeVars, List.mem_filter, h]
+
+/-- Lambda parameters are bound, hence not free in the lambda. -/
+theorem freeVars_lambda_params (ps : List (String × Ty)) (rt : Ty) (b : Expr)
+    (n : String) (h : n ∈ ps.map (·.1)) : n ∉ freeVars (.lambda ps rt b) := by
+  simp [freeVars, List.mem_filter, h]
 
 end MiniCompiler

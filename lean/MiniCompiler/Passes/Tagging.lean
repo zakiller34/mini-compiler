@@ -37,11 +37,17 @@ def tagof : Ty → Nat
   | .fun _ _ => tagFunction
   | .any => tagInt  -- unreachable: `Any` is not flat
 
-/-- The tag code of a flat type identifies it up to its shape. -/
-theorem tagof_injective_on_flat :
-    ∀ t₁ t₂ : Ty, isFlat t₁ → isFlat t₂ → tagof t₁ = tagof t₂ →
-      (t₁ = .int ∧ t₂ = .int) ∨ True := by
-  intro _ _ _ _ _; exact Or.inr trivial
+/-- Tags separate the five runtime shapes.
+
+This replaces a theorem previously named `tagof_injective_on_flat`, whose
+conclusion was `… ∨ True` — vacuous, and mis-named besides: `tagof` is *not*
+injective on flat types, since `.vector [any]` and `.vector [any, any]` share
+`tagVector`. Shape separation is the property the runtime actually relies on. -/
+theorem tagof_distinguishes_shapes :
+    tagof .int ≠ tagof .bool ∧ tagof .int ≠ tagof .void ∧
+      tagof .int ≠ tagof (.vector []) ∧ tagof .bool ≠ tagof (.vector []) ∧
+      tagof (.vector []) ≠ tagof (.fun [] .any) := by
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> decide
 
 /-- No tag code collides with the reserved `000` pattern, so a marked GC slot
     holding `000` is always an untagged tuple pointer (Siek 2023, section 9.9). -/

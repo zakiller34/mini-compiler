@@ -52,17 +52,25 @@ def castInsert : Expr → Expr
   | .vector_ es => .inject (.vector_ (es.map castInsert)) (anyVecTy es.length)
   | e => e
 
-/-- The defining invariant of the pass: every result has type `Any`. -/
-theorem cast_insert_types_any : ∀ _e : Expr, True := by
-  intro _; trivial
+/-- Cast insertion only ever mentions flat types in the casts it inserts:
+    the function type it projects a callee to is `(Any … -> Any)`.
 
-/-- Cast insertion only ever mentions flat types in the casts it inserts. -/
-theorem cast_insert_uses_flat_types :
-    ∀ n : Nat, isFlat (anyFunTy n) = true := by
-  sorry
+    Previously `sorry`. It is provable now only because `Ty`'s `BEq` was
+    replaced by a structural definition that reduces — see `AST.lean`. -/
+theorem cast_insert_uses_flat_types (n : Nat) : isFlat (anyFunTy n) = true := by
+  simp [isFlat, anyFunTy]
 
-/-- Cast insertion preserves the meaning of the L_Dyn program. -/
-theorem cast_insert_preserves_semantics : ∀ _e : Expr, True := by
-  intro _; trivial
+/-- Likewise for the tuple type it injects a vector at. -/
+theorem cast_insert_uses_flat_vec_types (n : Nat) :
+    isFlat (anyVecTy n) = true := by
+  simp [isFlat, anyVecTy]
+
+-- NOTE: `cast_insert_types_any` and `cast_insert_preserves_semantics` are
+-- deliberately absent. The typing invariant ("every result of `castInsert` has
+-- type `Any`") is true and statable, but `castInsert` above models only the
+-- representative forms of figure 9.10 — the remaining forms fall through
+-- `| e => e`, which makes the invariant FALSE of this model. Stating it with a
+-- `sorry` would assert something untrue. Completing the pass is the prerequisite.
+-- Semantics preservation needs an evaluator; see the README scope table.
 
 end MiniCompiler
