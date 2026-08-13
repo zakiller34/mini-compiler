@@ -23,6 +23,7 @@ set(TEST_SOURCES
     test_closure_conversion
     test_cast_insert
     test_reveal_casts
+    test_expose_allocation
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)
@@ -31,3 +32,9 @@ foreach(test_name IN LISTS TEST_SOURCES)
     target_include_directories(${test_name} PRIVATE ${PROJECT_SOURCE_DIR}/src)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
+
+# The GC lives in the C runtime, so this one links mc_runtime instead of mc_lib.
+add_executable(test_gc test_gc.cpp)
+target_link_libraries(test_gc PRIVATE mc_runtime GTest::gtest_main)
+target_include_directories(test_gc PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gc COMMAND test_gc)

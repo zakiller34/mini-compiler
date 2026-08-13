@@ -9,6 +9,7 @@ set(Z3_TEST_SOURCES
     test_calling_convention_z3
     test_closures_z3
     test_tagging_z3
+    test_gc_z3
 )
 
 foreach(test_name IN LISTS Z3_TEST_SOURCES)

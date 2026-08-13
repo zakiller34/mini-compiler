@@ -137,6 +137,25 @@ std::unique_ptr<Expr> make_gc_check(int64_t bytes) {
         std::make_unique<CollectExpr>(bytes));
 }
 
+/// @brief `(let ([v alloc]) (begin (vector-set! v i tmp_i)... v))`
+/// @requires tmp_names holds one temp per slot of the allocated object
+/// @ensures every slot is initialised before v becomes the value
+std::unique_ptr<Expr> bind_and_init(const std::vector<std::string> &tmp_names,
+                                    std::unique_ptr<Expr> alloc_node,
+                                    const std::string &v_name) {
+    std::vector<std::unique_ptr<Expr>> begin_body;
+    // invariant: begin_body has set!s for slots[0..i)
+    for (size_t i = 0; i < tmp_names.size(); ++i) {
+        begin_body.push_back(std::make_unique<VectorSetExpr>(
+            std::make_unique<VarExpr>(v_name), static_cast<int64_t>(i),
+            std::make_unique<VarExpr>(tmp_names[i])));
+    }
+    begin_body.push_back(std::make_unique<VarExpr>(v_name));
+    return std::make_unique<LetExpr>(
+        v_name, std::move(alloc_node),
+        std::make_unique<BeginExpr>(std::move(begin_body)));
+}
+
 /// @brief Lower a vector/closure literal: bind elems to temps, GC-check,
 ///        allocate, initialize slots, return the object.
 /// @requires alloc_node is an Allocate/AllocateClosure of length n
@@ -148,19 +167,19 @@ std::unique_ptr<Expr> lower_allocation(
     for (size_t i = 0; i < elem_exprs.size(); ++i) {
         tmp_names.push_back(fresh_tmp(tmp_counter));
     }
-    std::vector<std::unique_ptr<Expr>> begin_body;
-    begin_body.push_back(make_gc_check(kWordSize * (n + 1)));
-    std::string v_name = fresh_tmp(tmp_counter);
-    // invariant: begin_body has set!s for slots[0..i)
-    for (size_t i = 0; i < tmp_names.size(); ++i) {
-        begin_body.push_back(std::make_unique<VectorSetExpr>(
-            std::make_unique<VarExpr>(v_name), static_cast<int64_t>(i),
-            std::make_unique<VarExpr>(tmp_names[i])));
-    }
-    begin_body.push_back(std::make_unique<VarExpr>(v_name));
-    std::unique_ptr<Expr> inner = std::make_unique<LetExpr>(
-        v_name, std::move(alloc_node),
-        std::make_unique<BeginExpr>(std::move(begin_body)));
+    auto inner =
+        bind_and_init(tmp_names, std::move(alloc_node), fresh_tmp(tmp_counter));
+
+    // The GC check must precede the allocation, not sit in the body of the
+    // `let` that binds it (Siek 2023, section 6.2). `allocate` bumps free_ptr,
+    // so checking afterwards means the bump has already happened: the object
+    // can be placed past fromspace_end, and if the check then triggers a
+    // collection the fresh tuple is not yet on the root stack, so it is not
+    // copied and free_ptr is reset over it.
+    std::vector<std::unique_ptr<Expr>> checked;
+    checked.push_back(make_gc_check(kWordSize * (n + 1)));
+    checked.push_back(std::move(inner));
+    inner = std::make_unique<BeginExpr>(std::move(checked));
     // decreases: i; invariant: inner wrapped with lets for elems[i+1..]
     for (int i = static_cast<int>(tmp_names.size()) - 1; i >= 0; --i) {
         inner = std::make_unique<LetExpr>(
