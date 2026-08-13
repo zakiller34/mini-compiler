@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: build, tidy, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ clang-tidy clang-format libz3-dev
+
+      # clang-tidy runs as part of the build (CMAKE_CXX_CLANG_TIDY), and its
+      # readability-function-size gate only fires on a cold compile — an
+      # incremental local build silently skips every untouched file. CI is
+      # always cold, so this is where that rule is actually enforced.
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Unit, integration and Z3 tests
+        run: ctest --test-dir build --output-on-failure
+
+      # The interpreter and the compiled binary share only the parser and type
+      # checker. Requiring them to agree on every program is what caught the
+      # multi-argument miscompilation that 287 unit tests missed.
+      - name: Differential test (interpreter vs compiled)
+        run: ./tests/run_differential.sh build
+
+      - name: Formatting (report only)
+        continue-on-error: true
+        run: |
+          clang-format --dry-run --Werror \
+            src/*.cpp src/*.h src/passes/*.cpp src/passes/*.h \
+            src/ir/*.cpp src/ir/*.h
+
+  lean:
+    name: lean proofs and hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://github.com/leanprover/elan/releases/download/v3.1.1/elan-x86_64-unknown-linux-gnu.tar.gz \
+            | tar xz
+          ./elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      # `lake build` includes Hygiene.lean, which fails the build on a theorem
+      # whose conclusion is `True`, on a `sorry` outside the checked-in
+      # allowlist, or on native_decide. Twenty theorems in this repository once
+      # asserted nothing while the build stayed green; this is the check that
+      # makes that impossible rather than merely embarrassing.
+      - name: Build proofs and run the hygiene checker
+        working-directory: lean
+        run: lake build
+
+      - name: Proof honesty gate (grep pass)
+        working-directory: lean
+        run: ./scripts/check_honesty.sh

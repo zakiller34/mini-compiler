@@ -128,7 +128,7 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] Update interference graph for `movzbq`, `Cmpq`, `SetCC`, `Xorq`, `JmpIf`
 - [x] Update `patch_instructions` for `cmpq` imm-dst fix
 - [x] Update `emit` for new instructions + multi-block emission order
-- [ ] **Challenge: optimize blocks** — remove trivial jumps, merge blocks
+- [ ] **Challenge: optimize blocks** — declined (see Cross-Cutting)
 - [x] End-to-end: 6 phase3 .mc programs compile correctly; 12 phase1 programs still pass
 
 ### 3 — Tests ✅
@@ -146,10 +146,14 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ### 3 — Lean Proofs — Partial
 
-- [x] `bool_encoding_roundtrip` — and/or desugaring is equivalent (proven)
-- [ ] `type_progress` — well-typed expr is a value or can step (sorry)
-- [ ] `type_preservation` — stepping preserves types (sorry)
-- [ ] `shrink_preserves_semantics` — desugaring and/or to if preserves eval (sorry)
+- [x] `bool_encoding_roundtrip` / `or_encoding_roundtrip` — proven
+- [x] `shrink_no_and_or` — shrink eliminates every `and`/`or` node (proven)
+- [ ] `type_progress`, `type_preservation`, `shrink_preserves_semantics` —
+      **removed, not deferred.** These stood in the tree as
+      `∀ e, ... → True := trivial`: they typechecked, they were green, and they
+      asserted nothing. None can even be *stated* without an operational
+      semantics, which this development does not have. See "What is and is not
+      proved" in README.md.
 
 ---
 
@@ -207,7 +211,8 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ### 4 — Deferred
 
-- [ ] **Challenge: optimize blocks** — remove trivial jumps, merge blocks
+- [ ] **Challenge: optimize blocks** — declined; it is an optimisation, and the
+      remaining effort went to correctness instead
 
 ---
 
@@ -253,16 +258,30 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] `test_pipeline.cpp` — 3 new integration tests: SimpleTuple, TupleSet, TupleLength
 - [x] 5 `.mc` programs in `tests/programs/phase5/` (simple_tuple, tuple_set, tuple_length, nested_tuple, alias)
 
-### 5 — Deferred
+### 5 — Completed later
 
-- [ ] Z3 predicate tests (`test_gc_z3.cpp` — tag roundtrip, rootstack invariant)
-- [ ] Lean stubs (`AST.lean` Ty.vector, `Passes/ExposeAllocation.lean`, `GC.lean`)
-- [ ] Per-pass unit tests for expose_allocation, GC tags, GC runtime
-- [ ] GC stress integration test
+- [x] `tests/z3/test_gc_z3.cpp` — header tag round-trip, pointer-mask
+      independence, forwarding-pointer round-trip, why a live tag can never
+      read as forwarded
+- [x] `tests/unit/test_gc.cpp` — 10 tests driving `initialize`/`collect`
+      directly: relocation, reclamation, transitive tracing, shared children,
+      cycles, non-pointer slots, tagged immediates, tag preservation
+- [x] `tests/unit/test_expose_allocation.cpp` — 7 tests
+- [x] `tests/programs/phase5/gc_stress.mc` — ~4000 tuples, 16 KiB heap
+- [x] **Bug found by those tests**: the GC check was emitted in the *body* of
+      the `let` binding the allocation, so `allocate` bumped `free_ptr` before
+      anything checked there was room. Fixed; see
+      `.changeset/012_proof_hygiene.md` and the Phase 5 notes in README.md.
+- [x] `AST.lean` has `Ty.vector`
+
+### 5 — Not done
+
+- [ ] `Passes/ExposeAllocation.lean`, `GC.lean` — the collector is not modelled
+      in Lean; its invariants are covered by Z3 and by the unit tests instead
 
 ---
 
-## Phase 6: Functions (Book Ch. 7, pp. 125-141) — IN PROGRESS
+## Phase 6: Functions (Book Ch. 7, pp. 125-141) ✅
 
 **Language: L_Fun** — top-level function definitions, first-class function pointers, tail calls.
 
@@ -292,28 +311,42 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] **emit** — function defs emitted with `.globl`; `IndirectCallq` → `callq *arg`; `TailJmp` → `jmp *arg`
 - [x] End-to-end: 6 phase6 .mc programs (simple_call, two_args, multi_fn, factorial/sum_to, mutual_recursion, tail_call)
 
-### 6 — Tests — PARTIAL
+### 6 — Tests ✅
 
-- [x] All 19 existing unit/integration tests pass (backward compat)
+- [x] All existing unit/integration tests pass (backward compat)
 - [x] 6 `.mc` programs in `tests/programs/phase6/` compile + run correctly
-- [ ] `test_reveal_functions.cpp` — unit tests for reveal_functions pass
-- [ ] `test_limit_functions.cpp` — unit tests for limit_functions pass
-- [ ] `test_parser.cpp` — parse def, parse apply, parse type annotations
-- [ ] `test_type_checker.cpp` — function def/apply type checking tests
-- [ ] `test_interpreter.cpp` — function call/recursion tests
-- [ ] `test_select_calls.cpp` — args in correct registers, IndirectCallq/TailJmp
-- [ ] `test_pipeline.cpp` — function pipeline integration tests
-- [ ] Z3: `test_calling_convention_z3.cpp` — args_in_correct_registers, tail_call_no_stack_growth
+- [x] `test_reveal_functions.cpp` (4 tests), `test_limit_functions.cpp` (4)
+- [x] `test_parser.cpp` — parse def, parse apply, parse type annotations
+- [x] `test_type_checker.cpp` — function def/apply type checking tests
+- [x] `test_interpreter.cpp` — function call/recursion tests
+- [x] Args in correct registers, IndirectCallq/TailJmp — in
+      `test_select_instructions.cpp` rather than a separate `test_select_calls.cpp`
+- [x] `test_pipeline.cpp` — function pipeline integration tests
+- [x] Z3: `test_calling_convention_z3.cpp`
 
-### 6 — Known Issues / TODO
+### 6 — Resolved
 
-- [ ] `limit_functions` — full implementation (pack >6 args into tuple); currently stub
-- [ ] Higher-order function tests (pass/return functions) — not yet tested
-- [ ] `.align 8` on function labels in emit
-- [ ] Lean stubs: `AST.lean` update, `Passes/RevealFunctions.lean`, `Passes/LimitFunctions.lean`
-- [ ] Lean theorems: `calling_convention_correct`, `tail_call_stack_invariant`
-- [ ] Changeset `.changeset/009_functions.md`
-- [ ] Pre-existing bug: `read() + 10` fails compilation (explicate_control assertion in `make_atom` for ReadExpr in non-atomic position — pre-dates Phase 6)
+- [x] `limit_functions` — fully implemented (packs args[5..] into a tuple param)
+- [x] Higher-order functions — covered by `tests/programs/phase7/higher_order.mc`
+- [x] `.align 8` on function labels, and on `main` (added later; `main` was the
+      one entry point emitted without it)
+- [x] `Passes/RevealFunctions.lean`, `Passes/LimitFunctions.lean`
+- [x] Changeset `.changeset/009_functions.md`
+- [x] `read() + 10` — fixed in RCO (`rco.cpp:96,120-125` let-bind `Read` rather
+      than taking the `clone_leaf` shortcut), so `make_atom` never sees it.
+      `make_atom`'s `default:` branch, which used to reinterpret any node as a
+      `VarExpr`, now throws `ExplicateError`.
+- [x] **Miscompilation found later**: `add(20, 22)` returned 40. The function
+      entry sequence is a parallel move performed sequentially, and liveness
+      does not track physical registers, so a parameter could be homed in an
+      argument register still holding a later parameter. Fixed by precolouring
+      in `assign_homes`; see `.changeset/013_param_clobber_fix.md`.
+
+### 6 — Not done
+
+- [ ] Lean theorems `calling_convention_correct`, `tail_call_stack_invariant` —
+      the backend is not modelled in Lean at all (see "What is and is not
+      proved" in README.md)
 
 ---
 
@@ -462,9 +495,17 @@ statically typed **L_Any** intermediate language. Selected with `mc --dyn`.
 
 ---
 
-## Phase 9: Gradual Typing (Book Ch. 10, pp. 177-194) — *Optional/Advanced*
+## Phase 9: Gradual Typing (Book Ch. 10, pp. 177-194) — **not attempted**
 
 **Language: L_?** — mix static and dynamic typing with `Any` type annotation.
+
+Deliberately out of scope, with the reason recorded rather than left as an open
+checkbox. The remaining work in this project was worth more spent on making the
+existing eight phases *true* — the Lean development contained twenty theorems
+that proved nothing, and a live miscompilation of multi-argument calls — than on
+a ninth phase built on top of that. Higher-order casts also need proxy objects,
+which is the point where the verification story would have to be abandoned
+entirely rather than merely bounded.
 
 - [ ] Cast insertion between static and dynamic types
 - [ ] Proxy objects for higher-order casts (function/tuple proxies)
@@ -498,9 +539,22 @@ statically typed **L_Any** intermediate language. Selected with `mc --dyn`.
 
 ---
 
-## Cross-Cutting Concerns (ongoing)
+## Cross-Cutting Concerns
 
-- [ ] Error reporting with source locations
-- [ ] Comprehensive test harness (expected output, type errors, runtime errors)
-- [ ] CI: build + test on each commit
-- [ ] Grammar spec per phase in BNF
+- [x] **Error reporting with source locations** — `file:line:col: kind: message`.
+      Limitation: passes rebuild nodes without propagating positions, so a
+      pass-synthesised node reports no position rather than a wrong one.
+- [x] **Differential test harness** — `tests/run_differential.sh` runs all 50
+      programs through both the interpreter and the compiled binary and requires
+      agreement. This is what found the Phase 6 miscompilation.
+- [x] **CI** — `.github/workflows/ci.yml`: cold build with clang-tidy, ctest,
+      the differential harness, `lake build` (which runs the proof-hygiene
+      checker), and `check_honesty.sh`.
+- [x] **Proof hygiene gate** — `lean/Hygiene.lean` fails the build on a theorem
+      with a vacuous conclusion, an unlisted `sorry`, or `native_decide`.
+- [ ] Grammar spec per phase in BNF — not done; the grammar lives as a comment
+      in `src/parser.h`
+- [ ] **clang-format drift** — the tree does not currently satisfy its own
+      `.clang-format`. CI reports formatting but does not fail on it, because
+      the correction is a ~3600-line mechanical diff that has not been taken.
+      Recorded here rather than hidden behind a passing check.
