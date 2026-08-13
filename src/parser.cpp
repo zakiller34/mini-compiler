@@ -17,7 +17,7 @@ void Parser::advance() { cur_ = lex_.next(); }
 /// @requires cur_.kind == kind (throws ParseError otherwise)
 void Parser::expect(TokenKind kind, const std::string &msg) {
     if (cur_.kind != kind) {
-        throw ParseError("expected " + msg + ", got '" + cur_.text + "'");
+        throw ParseError("expected " + msg + ", got '" + cur_.text + "'", cur_.loc);
     }
     advance();
 }
@@ -45,7 +45,7 @@ TypePtr Parser::parse_type() {
         advance();
         return parse_fun_type();
     }
-    throw ParseError("expected type, got '" + cur_.text + "'");
+    throw ParseError("expected type, got '" + cur_.text + "'", cur_.loc);
 }
 
 /// @brief Parse `T1, ... ')' '->' R` (the leading '(' is already consumed)
@@ -74,7 +74,7 @@ TypePtr Parser::parse_annotation() {
         return parse_type();
     }
     if (cur_.kind == TokenKind::Colon) {
-        throw ParseError("type annotations are not allowed in --dyn mode");
+        throw ParseError("type annotations are not allowed in --dyn mode", cur_.loc);
     }
     return any_type();
 }
@@ -90,7 +90,7 @@ std::vector<std::pair<std::string, TypePtr>> Parser::parse_params() {
     // decreases: remaining tokens until ')'
     while (true) {
         if (cur_.kind != TokenKind::Ident) {
-            throw ParseError("expected parameter name");
+            throw ParseError("expected parameter name", cur_.loc);
         }
         std::string pname = cur_.text;
         advance();
@@ -108,7 +108,7 @@ std::vector<std::pair<std::string, TypePtr>> Parser::parse_params() {
 DefNode Parser::parse_def() {
     expect(TokenKind::Fn, "'fn'");
     if (cur_.kind != TokenKind::Ident) {
-        throw ParseError("expected function name after fn");
+        throw ParseError("expected function name after fn", cur_.loc);
     }
     std::string name = cur_.text;
     advance();
@@ -134,17 +134,70 @@ std::unique_ptr<Program> Parser::parse_program() {
     }
     auto body = parse_expr();
     if (cur_.kind != TokenKind::Eof) {
-        throw ParseError("expected EOF, got '" + cur_.text + "'");
+        throw ParseError("expected EOF, got '" + cur_.text + "'", cur_.loc);
     }
     return std::make_unique<Program>(std::move(defs), std::move(body));
 }
 
 /// @brief Parse expr: let binding or or_expr
+
+/// @brief Attach a source position to a freshly parsed node
+/// @ensures e->loc is `where` unless the node already carries a position
+static std::unique_ptr<Expr> stamp(std::unique_ptr<Expr> e, SourceLoc where) {
+    if (e && !e->loc.known()) e->loc = where;
+    return e;
+}
+
 std::unique_ptr<Expr> Parser::parse_expr() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_expr_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_or_expr() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_or_expr_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_and_expr() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_and_expr_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_cmp_expr() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_cmp_expr_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_additive() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_additive_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_unary() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_unary_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_postfix() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_postfix_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_primary() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_primary_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_cast() {
+    const SourceLoc start = cur_.loc;
+    return stamp(parse_cast_impl(), start);
+}
+
+std::unique_ptr<Expr> Parser::parse_expr_impl() {
     if (cur_.kind == TokenKind::Let) {
         advance();
         if (cur_.kind != TokenKind::Ident) {
-            throw ParseError("expected identifier after let");
+            throw ParseError("expected identifier after let", cur_.loc);
         }
         std::string var = cur_.text;
         advance();
@@ -159,7 +212,7 @@ std::unique_ptr<Expr> Parser::parse_expr() {
 }
 
 /// @brief Parse or_expr: and_expr (OR and_expr)*
-std::unique_ptr<Expr> Parser::parse_or_expr() {
+std::unique_ptr<Expr> Parser::parse_or_expr_impl() {
     auto lhs = parse_and_expr();
     // invariant: lhs accumulates left-assoc or chain
     // decreases: remaining tokens
@@ -173,7 +226,7 @@ std::unique_ptr<Expr> Parser::parse_or_expr() {
 }
 
 /// @brief Parse and_expr: cmp_expr (AND cmp_expr)*
-std::unique_ptr<Expr> Parser::parse_and_expr() {
+std::unique_ptr<Expr> Parser::parse_and_expr_impl() {
     auto lhs = parse_cmp_expr();
     // invariant: lhs accumulates left-assoc and chain
     // decreases: remaining tokens
@@ -187,7 +240,7 @@ std::unique_ptr<Expr> Parser::parse_and_expr() {
 }
 
 /// @brief Parse cmp_expr: additive ((EqEq|Lt|Le|Gt|Ge) additive)?
-std::unique_ptr<Expr> Parser::parse_cmp_expr() {
+std::unique_ptr<Expr> Parser::parse_cmp_expr_impl() {
     auto lhs = parse_additive();
     BinaryOp op{};
     bool has_cmp = true;
@@ -209,7 +262,7 @@ std::unique_ptr<Expr> Parser::parse_cmp_expr() {
 }
 
 /// @brief Parse additive: left-assoc + and - over unary
-std::unique_ptr<Expr> Parser::parse_additive() {
+std::unique_ptr<Expr> Parser::parse_additive_impl() {
     auto lhs = parse_unary();
     // invariant: lhs accumulates left-assoc +/- chain
     // decreases: remaining tokens
@@ -225,7 +278,7 @@ std::unique_ptr<Expr> Parser::parse_additive() {
 }
 
 /// @brief Parse unary: prefix -/not chain (iterative)
-std::unique_ptr<Expr> Parser::parse_unary() {
+std::unique_ptr<Expr> Parser::parse_unary_impl() {
     std::vector<UnaryOp> ops;
     // invariant: ops has all prefix ops consumed
     // decreases: remaining tokens
@@ -244,7 +297,7 @@ std::unique_ptr<Expr> Parser::parse_unary() {
 }
 
 /// @brief Parse postfix: primary ('[' INT ']' ('=' expr)? | '(' args ')')*
-std::unique_ptr<Expr> Parser::parse_postfix() {
+std::unique_ptr<Expr> Parser::parse_postfix_impl() {
     auto expr = parse_primary();
     // invariant: expr accumulates postfix subscript/set/application ops
     // decreases: remaining tokens
@@ -291,7 +344,7 @@ std::unique_ptr<Expr> Parser::parse_subscript(std::unique_ptr<Expr> vec) {
             std::move(vec), std::move(idx), std::move(val));
     }
     if (cur_.kind != TokenKind::IntLit) {
-        throw ParseError("expected integer index in []");
+        throw ParseError("expected integer index in []", cur_.loc);
     }
     int64_t idx = cur_.int_val;
     advance();
@@ -308,7 +361,7 @@ std::unique_ptr<Expr> Parser::parse_subscript(std::unique_ptr<Expr> vec) {
 /// @brief Parse `inject(e, T)` / `project(e, T)` (static mode only)
 /// @requires cur_ is Inject or Project
 /// @ensures result is InjectExpr or ProjectExpr with a flat ftype
-std::unique_ptr<Expr> Parser::parse_cast() {
+std::unique_ptr<Expr> Parser::parse_cast_impl() {
     bool is_inject = cur_.kind == TokenKind::Inject;
     advance();
     expect(TokenKind::LParen, "'('");
@@ -318,7 +371,7 @@ std::unique_ptr<Expr> Parser::parse_cast() {
     expect(TokenKind::RParen, "')'");
     if (!is_flat_type(ftype)) {
         throw ParseError("inject/project require a flat type, got " +
-                         ftype->dump());
+                         ftype->dump(), cur_.loc);
     }
     if (is_inject) {
         return std::make_unique<InjectExpr>(std::move(inner),
@@ -340,7 +393,7 @@ std::unique_ptr<Expr> Parser::parse_type_pred(TypePred pred) {
 /// @brief Parse primary: int, bool, ident, read(), if, parens
 // Token dispatch FSM: exempt from the 30-line rule
 // NOLINTNEXTLINE(readability-function-size)
-std::unique_ptr<Expr> Parser::parse_primary() {
+std::unique_ptr<Expr> Parser::parse_primary_impl() {
     switch (cur_.kind) {
     case TokenKind::IntLit: {
         int64_t val = cur_.int_val;
@@ -408,7 +461,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         advance();
         expect(TokenKind::Bang, "'!'");
         if (cur_.kind != TokenKind::Ident) {
-            throw ParseError("expected identifier after set!");
+            throw ParseError("expected identifier after set!", cur_.loc);
         }
         std::string name = cur_.text;
         advance();
@@ -480,7 +533,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         return std::move(inner);
     }
     default:
-        throw ParseError("unexpected token: '" + cur_.text + "'");
+        throw ParseError("unexpected token: '" + cur_.text + "'", cur_.loc);
     }
 }
 

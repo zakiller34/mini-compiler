@@ -12,8 +12,13 @@ Lexer::Lexer(std::istream &in) : input_(in) { advance(); }
 /// @brief Advance to next character
 /// @ensures cur_ is next char or EOF
 void Lexer::advance() {
+    if (cur_ == '\n') {
+        ++line_;
+        col_ = 0;
+    }
     int ch = input_.get();
     cur_ = (input_.good()) ? ch : EOF;
+    ++col_;
 }
 
 /// @brief Skip whitespace and // line comments
@@ -36,12 +41,19 @@ void Lexer::skip_ws() {
     }
 }
 
-/// @brief Get next token
-/// @ensures result is valid Token
+/// @brief Scan a token and stamp it with the position of its first character
+/// @ensures result.loc == token_loc()
+Token Lexer::next() {
+    Token t = next_impl();
+    t.loc = tok_start_;
+    return t;
+}
+
 // Character/keyword dispatch FSM: exempt from the 30-line rule
 // NOLINTNEXTLINE(readability-function-size)
-Token Lexer::next() {
+Token Lexer::next_impl() {
     skip_ws();
+    tok_start_ = SourceLoc{line_, col_};
 
     if (cur_ == EOF) {
         return {TokenKind::Eof, "", 0};

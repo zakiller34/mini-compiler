@@ -35,6 +35,19 @@ namespace {
 /// @brief Exit status used for a trapped dynamic type error
 constexpr int kTrappedErrorStatus = 255;
 
+/// @brief Format a diagnostic as `file:line:col: kind: message`
+/// @ensures the position is omitted when unknown, which happens for nodes a
+///          pass synthesised rather than parsed (notably under --dyn, where
+///          type checking runs after cast_insert)
+std::string diagnostic(const std::string &file, SourceLoc loc,
+                       const char *kind, const std::string &msg) {
+    std::string out = file;
+    if (loc.known()) {
+        out += ":" + std::to_string(loc.line) + ":" + std::to_string(loc.col);
+    }
+    return out + ": " + kind + ": " + msg;
+}
+
 /// @brief Open and parse .mc file into AST
 /// @requires filename is a readable .mc file path
 /// @ensures result has value on success, nullopt on file error;
@@ -47,8 +60,13 @@ std::optional<Program> parse_file(const std::string &filename, bool dyn) {
     }
     Lexer lex(ifs);
     Parser parser(lex, dyn);
-    auto p = parser.parse_program();
-    return Program{std::move(p->defs), std::move(p->body)};
+    try {
+        auto p = parser.parse_program();
+        return Program{std::move(p->defs), std::move(p->body)};
+    } catch (const ParseError &e) {
+        std::cerr << diagnostic(filename, e.loc, "error", e.what()) << "\n";
+        return std::nullopt;
+    }
 }
 
 /// @brief Shrink, uniquify, reveal functions, then insert casts for L_Dyn
@@ -89,7 +107,7 @@ int compile(const std::string &src_file, const std::string &out_file,
     std::unique_ptr<Program> front;
     try { front = front_end(*prog, dyn); }
     catch (const TypeError &e) {
-        std::cerr << "type error: " << e.what() << "\n";
+        std::cerr << diagnostic(src_file, e.loc, "type error", e.what()) << "\n";
         return 1;
     }
 
@@ -150,7 +168,7 @@ int run_interpret(const std::string &src_file, const std::string &input_file,
         if (dyn) dyn_prog = to_l_any(*prog, true);
         type_check(dyn ? *dyn_prog : *prog);
     } catch (const TypeError &e) {
-        std::cerr << "type error: " << e.what() << "\n";
+        std::cerr << diagnostic(src_file, e.loc, "type error", e.what()) << "\n";
         return 1;
     }
     const Program &target = dyn ? *dyn_prog : *prog;

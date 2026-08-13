@@ -13,6 +13,11 @@ namespace mc {
 class ParseError : public std::runtime_error {
   public:
     using std::runtime_error::runtime_error;
+    ParseError(const std::string &msg, SourceLoc where)
+        : std::runtime_error(msg), loc(where) {}
+
+    /// Where the offending token began; unknown if line == 0.
+    SourceLoc loc;
 };
 
 /// @brief Hand-written recursive-descent parser for L_While
@@ -65,19 +70,28 @@ class Parser {
     void expect(TokenKind kind, const std::string &msg);
 
     std::unique_ptr<Expr> parse_expr();
+    std::unique_ptr<Expr> parse_expr_impl();
     std::unique_ptr<Expr> parse_or_expr();
+    std::unique_ptr<Expr> parse_or_expr_impl();
     std::unique_ptr<Expr> parse_and_expr();
+    std::unique_ptr<Expr> parse_and_expr_impl();
     std::unique_ptr<Expr> parse_cmp_expr();
+    std::unique_ptr<Expr> parse_cmp_expr_impl();
     std::unique_ptr<Expr> parse_additive();
+    std::unique_ptr<Expr> parse_additive_impl();
     std::unique_ptr<Expr> parse_unary();
+    std::unique_ptr<Expr> parse_unary_impl();
     std::unique_ptr<Expr> parse_postfix();
+    std::unique_ptr<Expr> parse_postfix_impl();
     std::unique_ptr<Expr> parse_primary();
+    std::unique_ptr<Expr> parse_primary_impl();
     TypePtr parse_type();
     TypePtr parse_fun_type();
     TypePtr parse_annotation();
     std::vector<std::pair<std::string, TypePtr>> parse_params();
     DefNode parse_def();
     std::unique_ptr<Expr> parse_cast();
+    std::unique_ptr<Expr> parse_cast_impl();
     std::unique_ptr<Expr> parse_type_pred(TypePred pred);
     std::unique_ptr<Expr> parse_subscript(std::unique_ptr<Expr> vec);
 };

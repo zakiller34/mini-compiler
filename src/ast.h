@@ -1,5 +1,6 @@
 #pragma once
 
+#include "lexer.h"
 #include "type.h"
 
 #include <cassert>
@@ -32,6 +33,11 @@ enum class NodeKind {
 class Expr {
 public:
   virtual ~Expr() = default;
+
+  /// Position in the source file, when this node came from the parser.
+  /// Nodes synthesised by a pass leave it unknown (line == 0); passes rebuild
+  /// nodes rather than mutate them and do not currently propagate it.
+  SourceLoc loc;
 
   virtual NodeKind kind() const = 0;
 

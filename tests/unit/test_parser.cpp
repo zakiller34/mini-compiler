@@ -8,6 +8,7 @@
 #include "ast.h"
 #include "lexer.h"
 #include "parser.h"
+#include "type_checker.h"
 
 using namespace mc;
 
@@ -183,4 +184,74 @@ TEST(ParserAny, InjectRejectsANonFlatType) {
 TEST(ParserAny, AnyIsAWritableTypeAnnotation) {
     auto p = parse("fn f(x:Any) : Any { x }\n1", false);
     EXPECT_TRUE(is_any_type(p->defs[0].params[0].second));
+}
+
+// --- Source locations (cross-cutting: error reporting) ---
+
+namespace {
+
+/// Parse and return the body, or nullptr on a parse error.
+std::unique_ptr<Expr> parse_body(const std::string &src) {
+  std::istringstream iss(src);
+  Lexer lex(iss);
+  Parser p(lex);
+  auto prog = p.parse_program();
+  return std::move(prog->body);
+}
+
+} // namespace
+
+TEST(Lexer, TracksLineAndColumn) {
+  std::istringstream iss("let\n  x =\n42;\nx");
+  Lexer lex(iss);
+  auto t0 = lex.next();  // let
+  EXPECT_EQ(t0.loc.line, 1);
+  EXPECT_EQ(t0.loc.col, 1);
+  auto t1 = lex.next();  // x, second line, third column
+  EXPECT_EQ(t1.loc.line, 2);
+  EXPECT_EQ(t1.loc.col, 3);
+  lex.next();            // =
+  auto t3 = lex.next();  // 42, third line
+  EXPECT_EQ(t3.loc.line, 3);
+  EXPECT_EQ(t3.loc.col, 1);
+}
+
+TEST(Lexer, CommentsDoNotDisturbTheLineCount) {
+  std::istringstream iss("// a comment\n// another\n7");
+  Lexer lex(iss);
+  auto t = lex.next();
+  EXPECT_EQ(t.loc.line, 3);
+}
+
+TEST(Parser, StampsSourceLocationOnNodes) {
+  auto body = parse_body("let x = 5;\nx + 1");
+  ASSERT_NE(body, nullptr);
+  EXPECT_TRUE(body->loc.known());
+  EXPECT_EQ(body->loc.line, 1);  // the `let` starts the expression
+}
+
+TEST(Parser, ParseErrorCarriesThePositionOfTheOffendingToken) {
+  std::istringstream iss("let x = 5;\nx +");
+  Lexer lex(iss);
+  Parser p(lex);
+  try {
+    p.parse_program();
+    FAIL() << "expected a ParseError";
+  } catch (const ParseError &e) {
+    EXPECT_TRUE(e.loc.known());
+    EXPECT_EQ(e.loc.line, 2);  // EOF, just past the trailing `+`
+  }
+}
+
+TEST(TypeChecker, TypeErrorCarriesASourceLocation) {
+  auto body = parse_body("let x = 5;\nlet y = true;\nx + y");
+  ASSERT_NE(body, nullptr);
+  Program prog(std::move(body));
+  try {
+    type_check(prog);
+    FAIL() << "expected a TypeError";
+  } catch (const TypeError &e) {
+    EXPECT_TRUE(e.loc.known());
+    EXPECT_EQ(e.loc.line, 3);  // the offending `x + y`
+  }
 }

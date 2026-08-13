@@ -714,14 +714,26 @@ TypePtr run_check(const Expr *expr, const TypeEnv &env) {
     std::vector<TypePtr> types;
     stack.push_back(EvalFrame{expr, env});
 
+    // The node most recently entered. Errors raised while checking a node get
+    // its position; errors raised in a continuation frame (once operands are
+    // already typed) get the position of the last operand entered, which is
+    // approximate but still points into the offending expression.
+    const Expr *current = expr;
+
     // decreases: stack.size()
     while (!stack.empty()) {
         auto frame = std::move(stack.back());
         stack.pop_back();
-        if (auto *ef = std::get_if<EvalFrame>(&frame)) {
-            push_eval(*ef, stack, types);
-        } else {
-            process_cont(frame, stack, types);
+        try {
+            if (auto *ef = std::get_if<EvalFrame>(&frame)) {
+                current = ef->expr;
+                push_eval(*ef, stack, types);
+            } else {
+                process_cont(frame, stack, types);
+            }
+        } catch (const TypeError &e) {
+            if (e.loc.known() || current == nullptr) throw;
+            throw TypeError(e.what(), current->loc);
         }
     }
     return types.back();
@@ -751,7 +763,8 @@ TypePtr type_check(const Program &prog) {
         }
         auto body_t = run_check(def.body.get(), body_env);
         if (*body_t != *def.ret_type) {
-            throw TypeError("return type mismatch in " + def.name);
+            throw TypeError("return type mismatch in " + def.name,
+                            def.body->loc);
         }
     }
 
