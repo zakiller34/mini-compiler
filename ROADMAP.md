@@ -10,7 +10,7 @@ Based on *Essentials of Compilation* (Siek, 2023). Each phase adds language feat
 - [x] `.clang-tidy` + `.clang-format` configs
 - [x] `.mcp.json` (context7 MCP server)
 - [x] `.changeset/` folder with convention README
-- [x] `lean/lakefile.lean` with local mathlib4 + cslib deps
+- [x] `lean/lakefile.lean` — core Lean 4 only, no external deps (no Mathlib/cslib)
 - [x] `lean/lean-toolchain` matching v4.29.0-rc1
 - [x] AST node base class hierarchy (`Expr`, `Program`)
 - [x] Pretty-printer / AST dump (iterative S-expr format)
@@ -535,7 +535,7 @@ entirely rather than merely bounded.
 
 ### Phase 5: Process
 - [x] Structured bindings — already in use
-- [ ] CI — deferred
+- [x] CI — done later; see Cross-Cutting Concerns (`.github/workflows/ci.yml`)
 
 ---
 

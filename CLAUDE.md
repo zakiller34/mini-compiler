@@ -82,4 +82,4 @@ lean/             lakefile.lean, MiniCompiler/*.lean, Hygiene.lean, scripts/
 ## Lean conventions
 - Mirror C++ AST as inductive types in MiniCompiler/AST.lean
 - Each pass: Lean function + correctness theorem, sorry = tracked placeholder
-- Structural recursion preferred; minimal Mathlib + CSlib imports
+- Structural recursion preferred; core Lean 4 only, no Mathlib/CSlib

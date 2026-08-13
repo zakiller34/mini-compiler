@@ -32,7 +32,7 @@ jobs:
 
       # The interpreter and the compiled binary share only the parser and type
       # checker. Requiring them to agree on every program is what caught the
-      # multi-argument miscompilation that 287 unit tests missed.
+      # multi-argument miscompilation that the then-287-case suite missed.
       - name: Differential test (interpreter vs compiled)
         run: ./tests/run_differential.sh build
 
