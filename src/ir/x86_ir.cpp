@@ -57,6 +57,9 @@ std::string dump_arg(const Arg &a) {
     return "var:" + std::get<VarArg>(a).name;
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::string dump_instr(const Instr &i) {
     if (const auto *a = std::get_if<Addq>(&i))
         return "    addq " + dump_arg(a->src) + ", " + dump_arg(a->dst);
@@ -94,6 +97,12 @@ std::string dump_instr(const Instr &i) {
         return "    callq *" + dump_arg(ic->func);
     if (const auto *tj = std::get_if<TailJmp>(&i))
         return "    jmp *" + dump_arg(tj->func);
+    if (const auto *oq = std::get_if<Orq>(&i))
+        return "    orq " + dump_arg(oq->src) + ", " + dump_arg(oq->dst);
+    if (const auto *slq = std::get_if<Salq>(&i))
+        return "    salq " + dump_arg(slq->src) + ", " + dump_arg(slq->dst);
+    if (const auto *im = std::get_if<Imulq>(&i))
+        return "    imulq " + dump_arg(im->src) + ", " + dump_arg(im->dst);
     return "    jmp " + std::get<Jmp>(i).label;
 }
 

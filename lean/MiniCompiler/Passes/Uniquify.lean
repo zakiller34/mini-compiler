@@ -87,6 +87,8 @@ def uniquify_expr (env : RenameEnv) (counter : Nat) : Expr → Expr × Nat
       let (e', c') := uniquify_expr env acc.2 e
       (acc.1 ++ [e'], c')) ([], counter)
     (.closure a es', c)
+  -- Phase 8 (L_Any) nodes bind no variables
+  | e => (e, counter)
 
 /-- Top-level uniquify. -/
 def uniquify (p : Program) : Program :=

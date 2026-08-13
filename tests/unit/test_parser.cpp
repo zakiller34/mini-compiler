@@ -3,7 +3,11 @@
 #include <memory>
 #include <string>
 
+#include <sstream>
+
 #include "ast.h"
+#include "lexer.h"
+#include "parser.h"
 
 using namespace mc;
 
@@ -103,4 +107,80 @@ TEST(ParserDump, DefNodeDump) {
     d.body = std::make_unique<VarExpr>("x");
     // Check dump does not crash and produces non-empty output
     EXPECT_FALSE(d.dump().empty());
+}
+
+// ---- Phase 8: --dyn grammar and the L_Any surface forms ----
+
+namespace {
+
+/// @brief Parse `src` in static or dynamic mode
+std::unique_ptr<Program> parse(const std::string &src, bool dyn) {
+    std::istringstream in(src);
+    Lexer lex(in);
+    Parser parser(lex, dyn);
+    return parser.parse_program();
+}
+
+} // namespace
+
+TEST(ParserDyn, FnWithoutAnnotationsParsesAndBindsAny) {
+    auto p = parse("fn id(v) { v }\nid(1)", true);
+    ASSERT_EQ(p->defs.size(), 1U);
+    EXPECT_TRUE(is_any_type(p->defs[0].params[0].second));
+    EXPECT_TRUE(is_any_type(p->defs[0].ret_type));
+}
+
+TEST(ParserDyn, LambdaWithoutAnnotationsParses) {
+    auto p = parse("lambda (x) { x }", true);
+    ASSERT_EQ(p->body->kind(), NodeKind::Lambda);
+    const auto *la = expr_cast<LambdaExpr>(p->body.get());
+    EXPECT_TRUE(is_any_type(la->params[0].second));
+    EXPECT_TRUE(is_any_type(la->ret_type));
+}
+
+TEST(ParserDyn, AnnotationsAreRejectedInDynMode) {
+    EXPECT_THROW(parse("fn f(x:Int) : Int { x }\n1", true), ParseError);
+    EXPECT_THROW(parse("lambda (x:Int) : Int { x }", true), ParseError);
+}
+
+TEST(ParserDyn, AnnotationsAreStillRequiredInStaticMode) {
+    EXPECT_THROW(parse("fn f(x) { x }\n1", false), ParseError);
+    EXPECT_NO_THROW(parse("fn f(x:Int) : Int { x }\n1", false));
+}
+
+TEST(ParserDyn, SubscriptTakesAnExpressionInDynMode) {
+    auto p = parse("let t = vector(1, 2);\nt[0 + 1]", true);
+    // let t = ...; t[...]
+    ASSERT_EQ(p->body->kind(), NodeKind::Let);
+    const auto *body = expr_cast<LetExpr>(p->body.get())->body.get();
+    ASSERT_EQ(body->kind(), NodeKind::AnyVectorRef);
+    EXPECT_EQ(expr_cast<AnyVectorRefExpr>(body)->idx->kind(),
+              NodeKind::Binary);
+}
+
+TEST(ParserDyn, SubscriptStillNeedsALiteralInStaticMode) {
+    EXPECT_THROW(parse("let t = vector(1, 2);\nt[0 + 1]", false), ParseError);
+}
+
+TEST(ParserAny, StaticModeParsesInjectProjectAndPredicates) {
+    auto p = parse("inject(1, Int)", false);
+    ASSERT_EQ(p->body->kind(), NodeKind::Inject);
+    EXPECT_EQ(*expr_cast<InjectExpr>(p->body.get())->ftype, *int_type());
+
+    auto q = parse("project(inject(1, Int), Int)", false);
+    EXPECT_EQ(q->body->kind(), NodeKind::Project);
+
+    auto r = parse("integer?(inject(1, Int))", false);
+    ASSERT_EQ(r->body->kind(), NodeKind::TypePredicate);
+    EXPECT_EQ(expr_cast<TypePredExpr>(r->body.get())->pred,
+              TypePred::Integer);
+}
+
+TEST(ParserAny, InjectRejectsANonFlatType) {
+    EXPECT_THROW(parse("inject(1, Any)", false), ParseError);
+}
+
+TEST(ParserAny, AnyIsAWritableTypeAnnotation) {
+    auto p = parse("fn f(x:Any) : Any { x }\n1", false);
+    EXPECT_TRUE(is_any_type(p->defs[0].params[0].second));
 }

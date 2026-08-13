@@ -6,7 +6,8 @@
 
 namespace mc {
 
-Parser::Parser(Lexer &lex) : lex_(lex), cur_(lex_.next()) {}
+Parser::Parser(Lexer &lex, bool dyn)
+    : lex_(lex), cur_(lex_.next()), dyn_(dyn) {}
 
 /// @brief Consume current token, advance to next
 /// @modifies cur_
@@ -36,24 +37,46 @@ TypePtr Parser::parse_type() {
         advance();
         return void_type();
     }
+    if (cur_.kind == TokenKind::Any_kw) {
+        advance();
+        return any_type();
+    }
     if (cur_.kind == TokenKind::LParen) {
         advance();
-        std::vector<TypePtr> param_types;
-        if (cur_.kind != TokenKind::RParen) {
-            param_types.push_back(parse_type());
-            // invariant: param_types has parsed types so far
-            // decreases: remaining tokens until ')'
-            while (cur_.kind == TokenKind::Comma) {
-                advance();
-                param_types.push_back(parse_type());
-            }
-        }
-        expect(TokenKind::RParen, "')'");
-        expect(TokenKind::Arrow, "'->'");
-        auto ret = parse_type();
-        return fun_type(std::move(param_types), std::move(ret));
+        return parse_fun_type();
     }
     throw ParseError("expected type, got '" + cur_.text + "'");
+}
+
+/// @brief Parse `T1, ... ')' '->' R` (the leading '(' is already consumed)
+TypePtr Parser::parse_fun_type() {
+    std::vector<TypePtr> param_types;
+    if (cur_.kind != TokenKind::RParen) {
+        param_types.push_back(parse_type());
+        // invariant: param_types has parsed types so far
+        // decreases: remaining tokens until ')'
+        while (cur_.kind == TokenKind::Comma) {
+            advance();
+            param_types.push_back(parse_type());
+        }
+    }
+    expect(TokenKind::RParen, "')'");
+    expect(TokenKind::Arrow, "'->'");
+    auto ret = parse_type();
+    return fun_type(std::move(param_types), std::move(ret));
+}
+
+/// @brief Parse a `':' type` annotation, or yield `Any` in --dyn mode
+/// @ensures dyn mode consumes nothing and rejects a stray ':'
+TypePtr Parser::parse_annotation() {
+    if (!dyn_) {
+        expect(TokenKind::Colon, "':'");
+        return parse_type();
+    }
+    if (cur_.kind == TokenKind::Colon) {
+        throw ParseError("type annotations are not allowed in --dyn mode");
+    }
+    return any_type();
 }
 
 /// @brief Parse comma-separated `IDENT ':' type` list (parens consumed by caller)
@@ -71,9 +94,8 @@ std::vector<std::pair<std::string, TypePtr>> Parser::parse_params() {
         }
         std::string pname = cur_.text;
         advance();
-        expect(TokenKind::Colon, "':'");
-        auto ptype = parse_type();
-        params.push_back({std::move(pname), std::move(ptype)});
+        auto ptype = parse_annotation();
+        params.emplace_back(std::move(pname), std::move(ptype));
         if (cur_.kind != TokenKind::Comma) {
             break;
         }
@@ -93,8 +115,7 @@ DefNode Parser::parse_def() {
     expect(TokenKind::LParen, "'('");
     auto params = parse_params();
     expect(TokenKind::RParen, "')'");
-    expect(TokenKind::Colon, "':'");
-    auto ret_type = parse_type();
+    auto ret_type = parse_annotation();
     expect(TokenKind::LBrace, "'{'");
     auto body = parse_expr();
     expect(TokenKind::RBrace, "'}'");
@@ -247,25 +268,78 @@ std::unique_ptr<Expr> Parser::parse_postfix() {
             continue;
         }
         advance();
-        if (cur_.kind != TokenKind::IntLit) {
-            throw ParseError("expected integer index in []");
-        }
-        int64_t idx = cur_.int_val;
-        advance();
-        expect(TokenKind::RBracket, "']'");
-        if (cur_.kind == TokenKind::Equals) {
-            advance();
-            auto val = parse_expr();
-            expr = std::make_unique<VectorSetExpr>(
-                std::move(expr), idx, std::move(val));
-        } else {
-            expr = std::make_unique<VectorRefExpr>(std::move(expr), idx);
-        }
+        expr = parse_subscript(std::move(expr));
     }
     return expr;
 }
 
+/// @brief Parse the rest of `vec[...]` (the '[' is already consumed)
+/// @requires vec != nullptr
+/// @ensures static mode yields VectorRef/VectorSet with a literal index;
+///          dyn mode yields AnyVectorRef/AnyVectorSet with an expression index
+std::unique_ptr<Expr> Parser::parse_subscript(std::unique_ptr<Expr> vec) {
+    if (dyn_) {
+        auto idx = parse_expr();
+        expect(TokenKind::RBracket, "']'");
+        if (cur_.kind != TokenKind::Equals) {
+            return std::make_unique<AnyVectorRefExpr>(
+                std::move(vec), std::move(idx));
+        }
+        advance();
+        auto val = parse_expr();
+        return std::make_unique<AnyVectorSetExpr>(
+            std::move(vec), std::move(idx), std::move(val));
+    }
+    if (cur_.kind != TokenKind::IntLit) {
+        throw ParseError("expected integer index in []");
+    }
+    int64_t idx = cur_.int_val;
+    advance();
+    expect(TokenKind::RBracket, "']'");
+    if (cur_.kind != TokenKind::Equals) {
+        return std::make_unique<VectorRefExpr>(std::move(vec), idx);
+    }
+    advance();
+    auto val = parse_expr();
+    return std::make_unique<VectorSetExpr>(
+        std::move(vec), idx, std::move(val));
+}
+
+/// @brief Parse `inject(e, T)` / `project(e, T)` (static mode only)
+/// @requires cur_ is Inject or Project
+/// @ensures result is InjectExpr or ProjectExpr with a flat ftype
+std::unique_ptr<Expr> Parser::parse_cast() {
+    bool is_inject = cur_.kind == TokenKind::Inject;
+    advance();
+    expect(TokenKind::LParen, "'('");
+    auto inner = parse_expr();
+    expect(TokenKind::Comma, "','");
+    auto ftype = parse_type();
+    expect(TokenKind::RParen, "')'");
+    if (!is_flat_type(ftype)) {
+        throw ParseError("inject/project require a flat type, got " +
+                         ftype->dump());
+    }
+    if (is_inject) {
+        return std::make_unique<InjectExpr>(std::move(inner),
+                                            std::move(ftype));
+    }
+    return std::make_unique<ProjectExpr>(std::move(inner), std::move(ftype));
+}
+
+/// @brief Parse `pred?(e)` for a runtime type predicate
+/// @requires cur_ is the predicate token
+std::unique_ptr<Expr> Parser::parse_type_pred(TypePred pred) {
+    advance();
+    expect(TokenKind::LParen, "'('");
+    auto inner = parse_expr();
+    expect(TokenKind::RParen, "')'");
+    return std::make_unique<TypePredExpr>(pred, std::move(inner));
+}
+
 /// @brief Parse primary: int, bool, ident, read(), if, parens
+// Token dispatch FSM: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
 std::unique_ptr<Expr> Parser::parse_primary() {
     switch (cur_.kind) {
     case TokenKind::IntLit: {
@@ -368,8 +442,7 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         expect(TokenKind::LParen, "'('");
         auto params = parse_params();
         expect(TokenKind::RParen, "')'");
-        expect(TokenKind::Colon, "':'");
-        auto ret = parse_type();
+        auto ret = parse_annotation();
         expect(TokenKind::LBrace, "'{'");
         auto body = parse_expr();
         expect(TokenKind::RBrace, "'}'");
@@ -387,6 +460,19 @@ std::unique_ptr<Expr> Parser::parse_primary() {
         advance();
         return std::make_unique<VoidExpr>();
     }
+    case TokenKind::Inject:
+    case TokenKind::Project:
+        return parse_cast();
+    case TokenKind::IntegerP:
+        return parse_type_pred(TypePred::Integer);
+    case TokenKind::BooleanP:
+        return parse_type_pred(TypePred::Boolean);
+    case TokenKind::VectorP:
+        return parse_type_pred(TypePred::Vector);
+    case TokenKind::ProcedureP:
+        return parse_type_pred(TypePred::Procedure);
+    case TokenKind::VoidP:
+        return parse_type_pred(TypePred::Void);
     case TokenKind::LParen: {
         advance();
         auto inner = parse_expr();

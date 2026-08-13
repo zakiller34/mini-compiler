@@ -13,13 +13,19 @@ namespace mc {
 enum class UnaryOp { Neg, Not };
 enum class BinaryOp { Add, Sub, And, Or, Eq, Lt, Le, Gt, Ge };
 
+/// @brief Runtime type predicates of L_Dyn: integer?, boolean?, ...
+enum class TypePred { Integer, Boolean, Vector, Procedure, Void };
+
 enum class NodeKind {
   Int, Bool, Var, Read, Unary, Binary, If, Let,
   While, SetBang, Begin, Void, Get,
   Vector, VectorRef, VectorSet, VectorLength,
   Allocate, Collect, GlobalValue,
   Apply, FunRef,
-  Lambda, ProcArity, Closure, AllocateClosure
+  Lambda, ProcArity, Closure, AllocateClosure,
+  Inject, Project, TypePredicate,
+  AnyVectorRef, AnyVectorSet, AnyVectorLength,
+  MakeAny, TagOfAny, ValueOf, Exit
 };
 
 /// Base class for all expressions in L_While.
@@ -314,6 +320,120 @@ public:
   AllocateClosureExpr(int64_t l, TypePtr t, int64_t a)
       : len(l), type(std::move(t)), arity(a) {}
   NodeKind kind() const override { return NodeKind::AllocateClosure; }
+  std::string dump() const override;
+};
+
+/// @brief Tag a value of flat type `ftype`, producing an `Any` (Ch. 9.3)
+class InjectExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Inject;
+  std::unique_ptr<Expr> expr;
+  TypePtr ftype;
+  InjectExpr(std::unique_ptr<Expr> e, TypePtr t)
+      : expr(std::move(e)), ftype(std::move(t)) {}
+  NodeKind kind() const override { return NodeKind::Inject; }
+  std::string dump() const override;
+};
+
+/// @brief Untag an `Any` to flat type `ftype`, or trap (Ch. 9.3)
+class ProjectExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Project;
+  std::unique_ptr<Expr> expr;
+  TypePtr ftype;
+  ProjectExpr(std::unique_ptr<Expr> e, TypePtr t)
+      : expr(std::move(e)), ftype(std::move(t)) {}
+  NodeKind kind() const override { return NodeKind::Project; }
+  std::string dump() const override;
+};
+
+/// @brief Runtime type test on an `Any`: integer?(e), vector?(e), ...
+class TypePredExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::TypePredicate;
+  TypePred pred;
+  std::unique_ptr<Expr> expr;
+  TypePredExpr(TypePred p, std::unique_ptr<Expr> e)
+      : pred(p), expr(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::TypePredicate; }
+  std::string dump() const override;
+};
+
+/// @brief any-vector-ref: tuple access with a runtime (non-literal) index
+class AnyVectorRefExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::AnyVectorRef;
+  std::unique_ptr<Expr> vec;
+  std::unique_ptr<Expr> idx;
+  AnyVectorRefExpr(std::unique_ptr<Expr> v, std::unique_ptr<Expr> i)
+      : vec(std::move(v)), idx(std::move(i)) {}
+  NodeKind kind() const override { return NodeKind::AnyVectorRef; }
+  std::string dump() const override;
+};
+
+/// @brief any-vector-set!: tuple mutation with a runtime index
+class AnyVectorSetExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::AnyVectorSet;
+  std::unique_ptr<Expr> vec;
+  std::unique_ptr<Expr> idx;
+  std::unique_ptr<Expr> val;
+  AnyVectorSetExpr(std::unique_ptr<Expr> v, std::unique_ptr<Expr> i,
+                   std::unique_ptr<Expr> va)
+      : vec(std::move(v)), idx(std::move(i)), val(std::move(va)) {}
+  NodeKind kind() const override { return NodeKind::AnyVectorSet; }
+  std::string dump() const override;
+};
+
+/// @brief any-vector-length: length of a tuple held in an `Any`
+class AnyVectorLengthExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::AnyVectorLength;
+  std::unique_ptr<Expr> vec;
+  explicit AnyVectorLengthExpr(std::unique_ptr<Expr> v) : vec(std::move(v)) {}
+  NodeKind kind() const override { return NodeKind::AnyVectorLength; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by reveal_casts: attach a tag code to a value
+class MakeAnyExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::MakeAny;
+  std::unique_ptr<Expr> expr;
+  int64_t tag;
+  MakeAnyExpr(std::unique_ptr<Expr> e, int64_t t)
+      : expr(std::move(e)), tag(t) {}
+  NodeKind kind() const override { return NodeKind::MakeAny; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by reveal_casts: read the 3 tag bits of an `Any`
+class TagOfAnyExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::TagOfAny;
+  std::unique_ptr<Expr> expr;
+  explicit TagOfAnyExpr(std::unique_ptr<Expr> e) : expr(std::move(e)) {}
+  NodeKind kind() const override { return NodeKind::TagOfAny; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by reveal_casts: strip the tag, yielding type `ftype`
+class ValueOfExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::ValueOf;
+  std::unique_ptr<Expr> expr;
+  TypePtr ftype;
+  ValueOfExpr(std::unique_ptr<Expr> e, TypePtr t)
+      : expr(std::move(e)), ftype(std::move(t)) {}
+  NodeKind kind() const override { return NodeKind::ValueOf; }
+  std::string dump() const override;
+};
+
+/// @brief Introduced by reveal_casts: trapped-error, halts with status 255
+class ExitExpr : public Expr {
+public:
+  static constexpr NodeKind expected_kind = NodeKind::Exit;
+  NodeKind kind() const override { return NodeKind::Exit; }
   std::string dump() const override;
 };
 

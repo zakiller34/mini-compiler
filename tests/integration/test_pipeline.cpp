@@ -21,6 +21,9 @@
 #include "passes/uncover_get.h"
 #include "passes/uniquify.h"
 #include "passes/shrink.h"
+#include "passes/cast_insert.h"
+#include "passes/reveal_casts.h"
+#include "type_checker.h"
 
 using namespace mc;
 
@@ -548,4 +551,80 @@ TEST(Pipeline, MutableCaptureLowers) {
   auto asm_str = run_pipeline_full(std::move(body));
   EXPECT_FALSE(asm_str.empty());
   EXPECT_NE(asm_str.find("callq *"), std::string::npos);
+}
+
+// ---- Phase 8: dynamic typing ----
+
+/// Run the dynamic pipeline: L_Dyn AST -> cast_insert -> reveal_casts -> asm,
+/// mirroring `mc --dyn` in src/main.cpp.
+static std::string run_pipeline_dyn(std::unique_ptr<Expr> body,
+                                    std::vector<DefNode> defs = {}) {
+  Program prog(std::move(defs), std::move(body));
+  auto s0 = shrink(prog);
+  auto u = uniquify(*s0);
+  auto rf = reveal_functions(*u);
+  auto ci = cast_insert(*rf);
+  ci->body = std::make_unique<ProjectExpr>(std::move(ci->body), int_type());
+  type_check(*ci);
+  auto rc = reveal_casts(*ci);
+  auto ca = convert_assignments(*rc);
+  auto cc = convert_to_closures(*ca);
+  auto lf = limit_functions(*cc);
+  auto ug = uncover_get(*lf);
+  auto ea = expose_allocation(*ug);
+  auto r = remove_complex_operands(*ea);
+  auto c = explicate_control(*r);
+  auto s = select_instructions(c);
+  auto a = assign_homes(s);
+  auto p = patch_instructions(a);
+  auto f = generate_prelude_conclusion(p);
+  return emit(f);
+}
+
+// (1 + 2) dynamically: both operands are tagged, projected, added, retagged.
+TEST(Pipeline, DynArithLowers) {
+  auto body = std::make_unique<BinaryExpr>(
+      BinaryOp::Add, std::make_unique<IntExpr>(1),
+      std::make_unique<IntExpr>(2));
+  auto asm_str = run_pipeline_dyn(std::move(body));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("salq $3"), std::string::npos);  // make-any
+  EXPECT_NE(asm_str.find("orq $1"), std::string::npos);   // Integer tag
+  EXPECT_NE(asm_str.find("andq $7"), std::string::npos);  // tag-of-any
+  EXPECT_NE(asm_str.find("sarq $3"), std::string::npos);  // value-of
+}
+
+// A failed projection must reach the trapped-error runtime call.
+TEST(Pipeline, DynProjectTraps) {
+  auto body = std::make_unique<BinaryExpr>(
+      BinaryOp::Add, std::make_unique<BoolExpr>(true),
+      std::make_unique<IntExpr>(1));
+  auto asm_str = run_pipeline_dyn(std::move(body));
+  EXPECT_NE(asm_str.find("callq trapped_error"), std::string::npos);
+  EXPECT_NE(asm_str.find("movq $255"), std::string::npos);
+}
+
+// A tuple read with a runtime index gets a bounds check and scaled addressing.
+TEST(Pipeline, DynVectorBoundsCheck) {
+  std::vector<std::unique_ptr<Expr>> elems;
+  elems.push_back(std::make_unique<IntExpr>(10));
+  elems.push_back(std::make_unique<IntExpr>(20));
+  auto body = std::make_unique<AnyVectorRefExpr>(
+      std::make_unique<VectorExpr>(std::move(elems)),
+      std::make_unique<IntExpr>(1));
+  auto asm_str = run_pipeline_dyn(std::move(body));
+  EXPECT_NE(asm_str.find("imulq $8"), std::string::npos);  // scaled index
+  EXPECT_NE(asm_str.find("callq trapped_error"), std::string::npos);
+  EXPECT_NE(asm_str.find("$-8"), std::string::npos);       // pointer untag
+}
+
+// A runtime type predicate becomes a plain tag comparison.
+TEST(Pipeline, DynTypePredicateLowersToTagTest) {
+  auto body = std::make_unique<IfExpr>(
+      std::make_unique<TypePredExpr>(TypePred::Integer,
+                                     std::make_unique<IntExpr>(3)),
+      std::make_unique<IntExpr>(1), std::make_unique<IntExpr>(0));
+  auto asm_str = run_pipeline_dyn(std::move(body));
+  EXPECT_NE(asm_str.find("andq $7"), std::string::npos);
+  EXPECT_NE(asm_str.find("cmpq $1"), std::string::npos);
 }

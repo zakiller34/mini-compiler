@@ -1,5 +1,6 @@
 #include "uniquify.h"
 
+#include "any_rebuild.h"
 #include "clone_leaf.h"
 
 #include <algorithm>
@@ -47,11 +48,15 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild, ApplyBuild,
-                           LambdaBuild, ProcArityBuild>;
+                           LambdaBuild, ProcArityBuild,
+                           AnyBuildFrame>;
 
 /// @brief Evaluate leaf or push continuation frames for uniquify
 /// @requires ef.expr != nullptr
 /// @modifies stack, results, counter
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results, int &counter) {
     const Expr *e = ef.expr;
@@ -59,6 +64,12 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
 
     if (auto leaf = clone_leaf(e)) {
         results.push_back(std::move(*leaf));
+        return;
+    }
+    // The rename environment must ride along into the Any node's children
+    if (push_any_eval_with(e, stack, [&env](const Expr *c) {
+            return EvalFrame{c, env};
+        })) {
         return;
     }
     switch (e->kind()) {
@@ -216,9 +227,14 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
 /// @brief Process continuation frame, combining uniquified children
 /// @requires results has enough values for the continuation
 /// @modifies stack, results
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+    if (auto *anyb = std::get_if<AnyBuildFrame>(&frame)) {
+        build_any(*anyb, results);
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<UnaryExpr>(ub->op, std::move(operand)));
     } else if (auto *bl = std::get_if<BinBuildLhs>(&frame)) {

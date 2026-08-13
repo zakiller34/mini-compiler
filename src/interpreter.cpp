@@ -43,6 +43,20 @@ struct ProcArityFrame {};
 /// Restores the caller's environment after a closure body finishes.
 struct RestoreEnvFrame { std::map<std::string, std::shared_ptr<Value>> saved; };
 
+// -- L_Any frames (Siek 2023, figure 9.8) --
+
+struct InjectFrame { TypePtr ftype; };
+struct ProjectFrame { TypePtr ftype; };
+struct TypePredFrame { TypePred pred; };
+struct TagOfAnyFrame {};
+struct ValueOfFrame {};
+struct AnyRefVecFrame { const Expr *idx; };
+struct AnyRefIdxFrame {};
+struct AnySetVecFrame { const Expr *idx; const Expr *val; };
+struct AnySetIdxFrame { const Expr *val; };
+struct AnySetValFrame {};
+struct AnyLengthFrame {};
+
 using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            BinLhsFrame, BinRhsFrame, IfCondFrame,
                            WhileCondFrame, WhileBodyFrame,
@@ -51,7 +65,12 @@ using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            VectorSetVecFrame, VectorSetValFrame,
                            VectorLengthVecFrame,
                            ApplyFuncFrame, ApplyArgsFrame,
-                           ProcArityFrame, RestoreEnvFrame>;
+                           ProcArityFrame, RestoreEnvFrame,
+                           InjectFrame, ProjectFrame, TypePredFrame,
+                           TagOfAnyFrame, ValueOfFrame,
+                           AnyRefVecFrame, AnyRefIdxFrame,
+                           AnySetVecFrame, AnySetIdxFrame, AnySetValFrame,
+                           AnyLengthFrame>;
 
 /// @brief Get int64_t from Value or throw
 int64_t as_int(const Value &v) { return std::get<int64_t>(v); }
@@ -61,6 +80,73 @@ bool as_bool(const Value &v) { return std::get<bool>(v); }
 
 /// @brief Get tuple from Value or throw
 Tuple as_tuple(const Value &v) { return std::get<Tuple>(v); }
+
+// -- Tagged (Any) values --
+
+/// @brief Runtime tag of an untagged value
+/// @ensures matches tagof() on the value's static type
+TypePred tag_of_value(const Value &v) {
+    if (std::holds_alternative<int64_t>(v)) return TypePred::Integer;
+    if (std::holds_alternative<bool>(v)) return TypePred::Boolean;
+    if (std::holds_alternative<Tuple>(v)) return TypePred::Vector;
+    if (std::holds_alternative<FunctionValue>(v) ||
+        std::holds_alternative<ClosureRef>(v)) {
+        return TypePred::Procedure;
+    }
+    return TypePred::Void;
+}
+
+/// @brief The predicate a flat type answers to
+/// @requires is_flat_type(t)
+TypePred pred_of_type(const TypePtr &t) {
+    switch (t->kind) {
+    case TypeKind::Int: return TypePred::Integer;
+    case TypeKind::Bool: return TypePred::Boolean;
+    case TypeKind::Vector: return TypePred::Vector;
+    case TypeKind::Function: return TypePred::Procedure;
+    default: return TypePred::Void;
+    }
+}
+
+/// @brief Unwrap a tagged value, or trap
+/// @ensures result is the payload; throws TrappedError if v is not tagged
+const Value &untag(const Value &v) {
+    const auto *t = std::get_if<TaggedValue>(&v);
+    if (t == nullptr || !*t) throw TrappedError("expected a tagged value");
+    return (*t)->value;
+}
+
+/// @brief Structural equality that sees through tags
+/// @ensures tagged values are equal iff their tags and payloads are; this
+///          mirrors the compiled `cmpq` on two tagged 64-bit words
+bool values_equal(const Value &a, const Value &b) {
+    const auto *ta = std::get_if<TaggedValue>(&a);
+    const auto *tb = std::get_if<TaggedValue>(&b);
+    if (ta == nullptr || tb == nullptr) return a == b;
+    if (!*ta || !*tb) return *ta == *tb;
+    return (*ta)->tag == (*tb)->tag && (*ta)->value == (*tb)->value;
+}
+
+/// @brief Arity of a procedure value, or -1
+int64_t value_arity(const Value &v) {
+    if (const auto *cl = std::get_if<ClosureRef>(&v)) return (*cl)->arity;
+    if (const auto *f = std::get_if<FunctionValue>(&v)) return f->arity;
+    return -1;
+}
+
+/// @brief Check that a projection target's shape matches the value
+/// @requires is_flat_type(t)
+/// @ensures throws TrappedError on a length/arity mismatch
+void check_shape(const Value &inner, const TypePtr &t) {
+    auto n = static_cast<int64_t>(t->elem_types.size());
+    if (is_vector_type(t)) {
+        if (static_cast<int64_t>(as_tuple(inner)->elems.size()) != n) {
+            throw TrappedError("project: tuple length mismatch");
+        }
+    } else if (is_fun_type(t) && value_arity(inner) != n - 1) {
+        throw TrappedError("project: procedure arity mismatch");
+    }
+}
 
 /// @brief Pointer to program defs for function lookup
 const std::vector<DefNode> *g_defs = nullptr;
@@ -77,6 +163,9 @@ const DefNode *find_def(const std::string &name) {
 
 /// @brief Evaluate leaf or push continuation frames
 /// @requires e != nullptr
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
                std::vector<Value> &values, std::istream &in) {
     switch (e->kind()) {
@@ -229,10 +318,166 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{pa->expr.get()});
         break;
     }
+    case NodeKind::Inject: {
+        auto *ie = expr_cast<InjectExpr>(e);
+        stack.push_back(InjectFrame{ie->ftype});
+        stack.push_back(EvalFrame{ie->expr.get()});
+        break;
+    }
+    case NodeKind::Project: {
+        auto *pe = expr_cast<ProjectExpr>(e);
+        stack.push_back(ProjectFrame{pe->ftype});
+        stack.push_back(EvalFrame{pe->expr.get()});
+        break;
+    }
+    case NodeKind::TypePredicate: {
+        auto *tp = expr_cast<TypePredExpr>(e);
+        stack.push_back(TypePredFrame{tp->pred});
+        stack.push_back(EvalFrame{tp->expr.get()});
+        break;
+    }
+    case NodeKind::MakeAny: {
+        auto *ma = expr_cast<MakeAnyExpr>(e);
+        stack.push_back(InjectFrame{nullptr}); // tag taken from the value
+        stack.push_back(EvalFrame{ma->expr.get()});
+        break;
+    }
+    case NodeKind::TagOfAny:
+        stack.push_back(TagOfAnyFrame{});
+        stack.push_back(EvalFrame{expr_cast<TagOfAnyExpr>(e)->expr.get()});
+        break;
+    case NodeKind::ValueOf:
+        stack.push_back(ValueOfFrame{});
+        stack.push_back(EvalFrame{expr_cast<ValueOfExpr>(e)->expr.get()});
+        break;
+    case NodeKind::AnyVectorRef: {
+        auto *ar = expr_cast<AnyVectorRefExpr>(e);
+        stack.push_back(AnyRefVecFrame{ar->idx.get()});
+        stack.push_back(EvalFrame{ar->vec.get()});
+        break;
+    }
+    case NodeKind::AnyVectorSet: {
+        auto *as = expr_cast<AnyVectorSetExpr>(e);
+        stack.push_back(AnySetVecFrame{as->idx.get(), as->val.get()});
+        stack.push_back(EvalFrame{as->vec.get()});
+        break;
+    }
+    case NodeKind::AnyVectorLength:
+        stack.push_back(AnyLengthFrame{});
+        stack.push_back(
+            EvalFrame{expr_cast<AnyVectorLengthExpr>(e)->vec.get()});
+        break;
+    case NodeKind::Exit:
+        throw TrappedError("trapped-error");
     }
 }
 
+/// @brief Continuations for the tag operations
+/// @ensures returns false if frame is not one of them
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
+bool cont_tagging(Frame &frame, std::vector<Value> &values) {
+    if (auto *inf = std::get_if<InjectFrame>(&frame)) {
+        Value v = values.back(); values.pop_back();
+        TypePred tag = inf->ftype ? pred_of_type(inf->ftype)
+                                  : tag_of_value(v);
+        values.push_back(std::make_shared<TaggedData>(
+            TaggedData{std::move(v), tag}));
+        return true;
+    }
+    if (auto *pf = std::get_if<ProjectFrame>(&frame)) {
+        Value v = values.back(); values.pop_back();
+        const Value &inner = untag(v);
+        if (tag_of_value(inner) != pred_of_type(pf->ftype)) {
+            throw TrappedError("project: tag mismatch");
+        }
+        check_shape(inner, pf->ftype);
+        values.push_back(inner);
+        return true;
+    }
+    if (auto *tf = std::get_if<TypePredFrame>(&frame)) {
+        Value v = values.back(); values.pop_back();
+        values.push_back(tag_of_value(untag(v)) == tf->pred);
+        return true;
+    }
+    if (std::get_if<TagOfAnyFrame>(&frame) != nullptr) {
+        Value v = values.back(); values.pop_back();
+        static const std::map<TypePred, int64_t> codes = {
+            {TypePred::Integer, kTagInt}, {TypePred::Boolean, kTagBool},
+            {TypePred::Vector, kTagVector},
+            {TypePred::Procedure, kTagFunction}, {TypePred::Void, kTagVoid}};
+        values.push_back(codes.at(tag_of_value(untag(v))));
+        return true;
+    }
+    if (std::get_if<ValueOfFrame>(&frame) != nullptr) {
+        Value v = values.back(); values.pop_back();
+        values.push_back(untag(v));
+        return true;
+    }
+    return false;
+}
+
+/// @brief Continuations for the any-vector-* operations
+/// @ensures returns false if frame is not one of them; traps out of bounds
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
+bool cont_any_vector(Frame &frame, std::vector<Frame> &stack,
+                     std::vector<Value> &values) {
+    if (auto *rv = std::get_if<AnyRefVecFrame>(&frame)) {
+        stack.push_back(AnyRefIdxFrame{});
+        stack.push_back(EvalFrame{rv->idx});
+        return true;
+    }
+    if (auto *sv = std::get_if<AnySetVecFrame>(&frame)) {
+        stack.push_back(AnySetIdxFrame{sv->val});
+        stack.push_back(EvalFrame{sv->idx});
+        return true;
+    }
+    if (auto *si = std::get_if<AnySetIdxFrame>(&frame)) {
+        stack.push_back(AnySetValFrame{});
+        stack.push_back(EvalFrame{si->val});
+        return true;
+    }
+    if (std::get_if<AnyRefIdxFrame>(&frame) == nullptr &&
+        std::get_if<AnySetValFrame>(&frame) == nullptr &&
+        std::get_if<AnyLengthFrame>(&frame) == nullptr) {
+        return false;
+    }
+    if (std::get_if<AnyLengthFrame>(&frame) != nullptr) {
+        Value vec = values.back(); values.pop_back();
+        values.push_back(
+            static_cast<int64_t>(as_tuple(untag(vec))->elems.size()));
+        return true;
+    }
+    bool is_set = std::get_if<AnySetValFrame>(&frame) != nullptr;
+    Value val;
+    if (is_set) { val = values.back(); values.pop_back(); }
+    Value idx = values.back(); values.pop_back();
+    Value vec = values.back(); values.pop_back();
+    const Value &inner = untag(vec);
+    if (!std::holds_alternative<Tuple>(inner)) {
+        throw TrappedError("any-vector: not a tuple");
+    }
+    auto tup = as_tuple(inner);
+    int64_t i = as_int(idx);
+    if (i < 0 || i >= static_cast<int64_t>(tup->elems.size())) {
+        throw TrappedError("any-vector: index out of bounds");
+    }
+    if (is_set) {
+        tup->elems[static_cast<size_t>(i)] = std::move(val);
+        values.push_back(std::monostate{});
+    } else {
+        values.push_back(tup->elems[static_cast<size_t>(i)]);
+    }
+    return true;
+}
+
 /// @brief Process continuation frame
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
                   std::vector<Value> &values) {
     if (auto *lf = std::get_if<LetBindFrame>(&frame)) {
@@ -258,7 +503,7 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         case BinaryOp::Sub:
             values.push_back(as_int(lhs) - as_int(rhs)); break;
         case BinaryOp::Eq:
-            values.push_back(lhs == rhs); break;
+            values.push_back(values_equal(lhs, rhs)); break;
         case BinaryOp::Lt:
             values.push_back(as_int(lhs) < as_int(rhs)); break;
         case BinaryOp::Le:
@@ -412,6 +657,9 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         }
     } else if (auto *rf = std::get_if<RestoreEnvFrame>(&frame)) {
         env = std::move(rf->saved);
+    } else if (!cont_tagging(frame, values) &&
+               !cont_any_vector(frame, stack, values)) {
+        throw std::runtime_error("interpret: unexpected continuation frame");
     }
 }
 

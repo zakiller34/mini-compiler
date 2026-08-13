@@ -1,5 +1,6 @@
 #include "rco.h"
 
+#include "any_rebuild.h"
 #include "clone_leaf.h"
 
 #include <algorithm>
@@ -33,6 +34,8 @@ struct VectorSetValBuild { int64_t index; Need need; };
 struct VectorLengthBuild { Need need; };
 struct ApplyBuild { size_t total; std::vector<const Expr *> remaining; Need need; };
 struct ProcArityBuild { Need need; };
+/// Every L_Any node takes only atomic operands, so one frame covers them all
+struct AnyRcoBuild { const Expr *node; size_t count; Need need; };
 
 using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            IfBuildCond, IfBuildThen, IfBuildElse,
@@ -41,7 +44,7 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            SetBangBuild, BeginBuild,
                            VectorRefBuild, VectorSetVecBuild,
                            VectorSetValBuild, VectorLengthBuild,
-                           ApplyBuild, ProcArityBuild>;
+                           ApplyBuild, ProcArityBuild, AnyRcoBuild>;
 
 using Binding = std::pair<std::string, std::unique_ptr<Expr>>;
 
@@ -80,6 +83,9 @@ std::unique_ptr<Expr> wrap_bindings(std::unique_ptr<Expr> expr,
 /// @brief Evaluate leaf or push continuation frames for RCO
 /// @requires ef.expr != nullptr
 /// @modifies stack, results, tmp_counter
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<Result> &results, int &tmp_counter) {
     const Expr *e = ef.expr;
@@ -92,6 +98,19 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
             results.push_back({std::move(*leaf), {}});
             return;
         }
+    }
+    // Exit is a tail, never an operand, so it is never atomized
+    if (e->kind() == NodeKind::Exit) {
+        results.push_back({std::make_unique<ExitExpr>(), {}});
+        return;
+    }
+    if (auto kids = any_children(e)) {
+        stack.push_back(AnyRcoBuild{e, kids->size(), ef.need});
+        // invariant: children pushed in reverse, evaluated left to right
+        for (auto it = kids->rbegin(); it != kids->rend(); ++it) {
+            stack.push_back(EvalFrame{*it, Need::Atom});
+        }
+        return;
     }
     switch (e->kind()) {
     case NodeKind::Var:
@@ -245,9 +264,29 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
 /// @brief Process continuation frame, combining child results for RCO
 /// @requires results has enough values for the continuation
 /// @modifies stack, results, tmp_counter
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<Result> &results, int &tmp_counter) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+    if (auto *arb = std::get_if<AnyRcoBuild>(&frame)) {
+        std::vector<std::unique_ptr<Expr>> kids(arb->count);
+        std::vector<std::vector<Binding>> per_child(arb->count);
+        // invariant: kids/per_child [i..count) taken off the results stack
+        for (size_t i = arb->count; i > 0; --i) {
+            auto r = std::move(results.back()); results.pop_back();
+            kids[i - 1] = std::move(r.expr);
+            per_child[i - 1] = std::move(r.bindings);
+        }
+        Result res;
+        // bindings must stay in evaluation order: wrap_bindings puts [0] outermost
+        for (auto &bs : per_child) {
+            for (auto &b : bs) res.bindings.push_back(std::move(b));
+        }
+        res.expr = rebuild_any(arb->node, std::move(kids));
+        atomize(res, arb->need, tmp_counter);
+        results.push_back(std::move(res));
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         Result res;
         res.bindings = std::move(operand.bindings);

@@ -38,6 +38,9 @@ cir::Atom make_atom(const Expr *e) {
 /// @brief Convert AST expr to CExpr (for atomic/simple exprs after RCO)
 /// @requires e is atomic or simple (Unary/Binary with atomic operands)
 /// @ensures result is corresponding CIR CExpr
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 cir::CExpr expr_to_cexpr(const Expr *e) {
     switch (e->kind()) {
     case NodeKind::Int:
@@ -127,6 +130,33 @@ cir::CExpr expr_to_cexpr(const Expr *e) {
         auto *pa = expr_cast<ProcArityExpr>(e);
         return cir::CProcArityExpr{make_atom(pa->expr.get())};
     }
+    case NodeKind::MakeAny: {
+        auto *ma = expr_cast<MakeAnyExpr>(e);
+        return cir::CMakeAnyExpr{make_atom(ma->expr.get()), ma->tag};
+    }
+    case NodeKind::TagOfAny: {
+        auto *ta = expr_cast<TagOfAnyExpr>(e);
+        return cir::CTagOfAnyExpr{make_atom(ta->expr.get())};
+    }
+    case NodeKind::ValueOf: {
+        auto *vo = expr_cast<ValueOfExpr>(e);
+        return cir::CValueOfExpr{make_atom(vo->expr.get()), vo->ftype};
+    }
+    case NodeKind::AnyVectorRef: {
+        auto *ar = expr_cast<AnyVectorRefExpr>(e);
+        return cir::CAnyVectorRefExpr{make_atom(ar->vec.get()),
+                                       make_atom(ar->idx.get())};
+    }
+    case NodeKind::AnyVectorSet: {
+        auto *as = expr_cast<AnyVectorSetExpr>(e);
+        return cir::CAnyVectorSetExpr{make_atom(as->vec.get()),
+                                       make_atom(as->idx.get()),
+                                       make_atom(as->val.get())};
+    }
+    case NodeKind::AnyVectorLength: {
+        auto *al = expr_cast<AnyVectorLengthExpr>(e);
+        return cir::CAnyVectorLengthExpr{make_atom(al->vec.get())};
+    }
     default:
         return cir::AtomExpr{cir::IntAtom{0}};
     }
@@ -212,6 +242,14 @@ void emit_begin_effects(
                 std::move(cur_stmts), sub, next_l});
             cur_label = next_l;
             cur_stmts = {};
+        } else if (sub->kind() == NodeKind::SetBang &&
+                   is_complex_init(
+                       expr_cast<SetBangExpr>(sub)->expr.get())) {
+            std::string next_l = fresh_label("seq", lc);
+            wl.push_back(EffectWork{cur_label, std::move(cur_stmts), sub,
+                                     next_l});
+            cur_label = next_l;
+            cur_stmts = {};
         } else if (sub->kind() == NodeKind::SetBang) {
             auto *ss = expr_cast<SetBangExpr>(sub);
             cur_stmts.push_back({ss->var_name,
@@ -226,6 +264,9 @@ void emit_begin_effects(
 /// @brief Handle TailWork: expr in tail (return) position
 /// @requires tw valid, blocks/worklist/lc by ref
 /// @ensures new blocks emitted or work items pushed
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
                       std::map<std::string, cir::BasicBlock> &blocks,
                       int &lc, bool allow_tail_calls = false) {
@@ -233,6 +274,11 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
     const Expr *cur = tw.expr;
     peel_lets(cur, stmts);
 
+    // Exit halts, so the block ends here whatever position it appears in
+    if (cur->kind() == NodeKind::Exit) {
+        blocks[tw.block_label] = {std::move(stmts), cir::Exit{}};
+        return;
+    }
     switch (cur->kind()) {
     case NodeKind::If: {
         auto *ife = expr_cast<IfExpr>(cur);
@@ -314,12 +360,30 @@ void handle_tail_work(TailWork &tw, std::vector<Work> &wl,
 /// @requires pw valid
 /// @ensures IfStmt/Goto block emitted or work items pushed
 /// @returns true if caller should continue (skip fallthrough default)
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
                       std::map<std::string, cir::BasicBlock> &blocks,
                       int &lc) {
     const Expr *cond = pw.expr;
     peel_lets(cond, pw.stmts);
+    if (cond->kind() == NodeKind::Exit) {
+        blocks[pw.block_label] = {std::move(pw.stmts), cir::Exit{}};
+        return true;
+    }
     switch (cond->kind()) {
+    case NodeKind::Let: {
+        // A let whose init is complex (typically a projection's tag test)
+        // survives peel_lets, so evaluate it into its variable first.
+        auto *le = expr_cast<LetExpr>(cond);
+        std::string cont_l = fresh_label("pcont", lc);
+        wl.push_back(PredWork{le->body.get(), pw.then_label, pw.else_label,
+                               cont_l, {}});
+        wl.push_back(AssignWork{pw.block_label, std::move(pw.stmts),
+                                 le->init.get(), le->var, cont_l});
+        return true;
+    }
     case NodeKind::Binary: {
         auto *bine = expr_cast<BinaryExpr>(cond);
         if (bine->op == BinaryOp::Eq || bine->op == BinaryOp::Lt ||
@@ -375,10 +439,17 @@ bool handle_pred_work(PredWork &pw, std::vector<Work> &wl,
 /// @brief Handle AssignWork: expr assigned to var, then goto cont
 /// @requires aw valid
 /// @ensures assignment block emitted or work items pushed
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
                         std::map<std::string, cir::BasicBlock> &blocks,
                         int &lc) {
     const Expr *e = aw.expr;
+    if (e->kind() == NodeKind::Exit) {
+        blocks[aw.block_label] = {std::move(aw.stmts), cir::Exit{}};
+        return;
+    }
     switch (e->kind()) {
     case NodeKind::If: {
         auto *ife = expr_cast<IfExpr>(e);
@@ -427,6 +498,15 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
     case NodeKind::SetBang: {
         auto *se = expr_cast<SetBangExpr>(e);
         auto stmts = std::move(aw.stmts);
+        // A complex value needs its own blocks; set! itself yields void
+        if (is_complex_init(se->expr.get())) {
+            std::string cont_l = fresh_label("scont", lc);
+            blocks[cont_l] = {{{aw.var, cir::AtomExpr{cir::IntAtom{0}}}},
+                               cir::Goto{aw.cont_label}};
+            wl.push_back(AssignWork{aw.block_label, std::move(stmts),
+                                     se->expr.get(), se->var_name, cont_l});
+            break;
+        }
         stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
         stmts.push_back({aw.var, cir::AtomExpr{cir::IntAtom{0}}});
         blocks[aw.block_label] = {std::move(stmts),
@@ -469,6 +549,9 @@ void handle_assign_work(AssignWork &aw, std::vector<Work> &wl,
 /// @brief Handle EffectWork: expr evaluated for side-effect, goto cont
 /// @requires ew valid
 /// @ensures effect block emitted or work items pushed
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
                         std::map<std::string, cir::BasicBlock> &blocks,
                         int &lc) {
@@ -476,9 +559,29 @@ void handle_effect_work(EffectWork &ew, std::vector<Work> &wl,
     auto stmts = std::move(ew.stmts);
     peel_lets(e, stmts);
 
+    if (e->kind() == NodeKind::Exit) {
+        blocks[ew.block_label] = {std::move(stmts), cir::Exit{}};
+        return;
+    }
     switch (e->kind()) {
+    case NodeKind::Let: {
+        // Complex init survives peel_lets; bind it, then continue in effect
+        auto *le = expr_cast<LetExpr>(e);
+        std::string cont_l = fresh_label("econt", lc);
+        wl.push_back(EffectWork{cont_l, {}, le->body.get(), ew.cont_label});
+        wl.push_back(AssignWork{ew.block_label, std::move(stmts),
+                                 le->init.get(), le->var, cont_l});
+        break;
+    }
     case NodeKind::SetBang: {
         auto *se = expr_cast<SetBangExpr>(e);
+        // A complex value (e.g. a projection's tag test) needs its own blocks
+        if (is_complex_init(se->expr.get())) {
+            wl.push_back(AssignWork{ew.block_label, std::move(stmts),
+                                     se->expr.get(), se->var_name,
+                                     ew.cont_label});
+            break;
+        }
         stmts.push_back({se->var_name, expr_to_cexpr(se->expr.get())});
         blocks[ew.block_label] = {std::move(stmts),
                                    cir::Goto{ew.cont_label}};

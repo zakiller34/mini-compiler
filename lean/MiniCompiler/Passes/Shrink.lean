@@ -37,6 +37,8 @@ def shrink : Expr → Expr
   | .lambda ps rt b => .lambda ps rt (shrink b)
   | .procArity e => .procArity (shrink e)
   | .closure a es => .closure a (es.map shrink)
+  -- Phase 8 (L_Any) nodes pass through unchanged
+  | e => e
 
 /-- Shrink preserves evaluation semantics. -/
 theorem shrink_preserves_semantics : ∀ e : Expr,

@@ -29,7 +29,18 @@ inductive Ty where
   | void : Ty
   | vector : List Ty → Ty
   | fun : List Ty → Ty → Ty
+  -- Phase 8 (L_Any): the dynamic type
+  | any : Ty
   deriving Repr, BEq
+
+/-- Runtime type predicates of L_Dyn: integer?, boolean?, ... -/
+inductive TypePred where
+  | integer : TypePred
+  | boolean : TypePred
+  | vector : TypePred
+  | procedure : TypePred
+  | void : TypePred
+  deriving Repr, DecidableEq
 
 inductive Expr where
   | int (value : Int) : Expr
@@ -55,6 +66,18 @@ inductive Expr where
   | lambda (params : List (String × Ty)) (retType : Ty) (body : Expr) : Expr
   | procArity (expr : Expr) : Expr
   | closure (arity : Nat) (elems : List Expr) : Expr
+  -- Phase 8 (L_Any): tagged values (Siek 2023, figure 9.5)
+  | inject (expr : Expr) (ftype : Ty) : Expr
+  | project (expr : Expr) (ftype : Ty) : Expr
+  | typePred (pred : TypePred) (expr : Expr) : Expr
+  | anyVectorRef (vec idx : Expr) : Expr
+  | anyVectorSet (vec idx val : Expr) : Expr
+  | anyVectorLength (vec : Expr) : Expr
+  -- Introduced by reveal_casts (Siek 2023, section 9.5)
+  | makeAny (expr : Expr) (tag : Nat) : Expr
+  | tagOfAny (expr : Expr) : Expr
+  | valueOf (expr : Expr) (ftype : Ty) : Expr
+  | exit_ : Expr
   deriving Repr
 
 /-- Top-level function definition. -/

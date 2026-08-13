@@ -363,17 +363,102 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ---
 
-## Phase 8: Dynamic Typing (Book Ch. 9, pp. 159-175) — *Optional/Advanced*
+## Phase 8: Dynamic Typing (Book Ch. 9, pp. 159-175) ✅
 
-**Language: L_Dyn** — dynamically typed subset; values carry runtime type tags.
+**Language: L_Dyn** — annotation-free surface language, compiled through the
+statically typed **L_Any** intermediate language. Selected with `mc --dyn`.
 
-- [ ] Tagged value representation: 3 low bits encode type (001=int, 100=bool, 010=tuple, 011=procedure, 101=void)
-- [ ] `Inject` (tag a value) and `Project` (check tag + extract) operations
-- [ ] L_Any intermediate language with `Any` type
-- [ ] **cast_insertion** — compile L_Dyn to L_Any by inserting Inject/Project
-- [ ] Runtime type predicates: `integer?`, `boolean?`, `vector?`, `procedure?`, `void?`
-- [ ] Select instructions: `Inject` -> shift + OR tag; `Project` -> check tag + shift; `trapped-error` -> exit(255)
-- [ ] Test: polymorphic programs, type errors at runtime
+### 8A — Frontend ✅
+
+- [x] Tag encoding: `001` int, `100` bool, `010` tuple, `011` procedure,
+      `101` void; `000` reserved for untagged tuple pointers (§9.9)
+- [x] `TypeKind::Any` + `any_type()`, `is_any_type`, `is_flat_type`, `tagof`,
+      `is_root_type` (shared Vector-or-Any predicate for the GC)
+- [x] New tokens: `Any`, `inject`, `project`, `integer?`, `boolean?`,
+      `vector?`, `procedure?`, `void?` (a trailing `?` now lexes into the name)
+- [x] `Parser(lex, dyn)` — dyn mode rejects every type annotation and makes
+      every binder `Any`; `e[i]` takes an arbitrary index expression
+- [x] AST nodes: `InjectExpr`, `ProjectExpr`, `TypePredExpr`,
+      `AnyVectorRef/Set/LengthExpr`, `MakeAnyExpr`, `TagOfAnyExpr`,
+      `ValueOfExpr`, `ExitExpr`
+- [x] Type checker: fig 9.6 rules; `Exit` unifies with the other `if` branch
+- [x] Interpreter: `TaggedValue` in the `Value` variant, `TrappedError` → 255
+
+### 8B — Compiler Passes ✅
+
+- [x] **cast_insert** (new) — L_Dyn → L_Any per fig 9.10; every subexpression
+      has type `Any`; the top level is projected to `Int` so the process exit
+      status is the plain integer
+- [x] **reveal_casts** (new) — `Inject` → `make-any`; `Project` → tag test +
+      `value-of` else `Exit` (plus a length check for tuples and an arity
+      check for procedures); predicates → tag comparisons; `any-vector-ref/set!`
+      gain a tag and bounds check
+- [x] `any_rebuild.h` — one shared frame + rebuild helper so all nine existing
+      AST passes thread the L_Any nodes without duplicating boilerplate
+- [x] C IR: `CMakeAny/CTagOfAny/CValueOf/CAnyVectorRef/Set/Length` + `Exit` tail
+- [x] x86 IR: `Orq`, `Salq`, `Imulq`
+- [x] **select_instructions** (§9.8) — `salq`/`orq` for make-any, `andq $7` for
+      tag-of-any, `sarq $3` or `movq $-8; andq` for value-of, `imulq` for the
+      runtime-index tuple access, `callq trapped_error` for `Exit`
+- [x] **interference** (§9.9) — an `Any` live across a call interferes with
+      every allocable register, so it spills; **assign_homes** puts it on the
+      root stack
+- [x] **runtime.c** — `trapped_error` (exit 255); the collector preserves a
+      slot's tag bits and follows only `000`/`010`/`011` slots
+
+### 8 — Tests ✅
+
+- [x] `test_cast_insert.cpp` — every result is `Any`; operands projected;
+      lambda/def signatures become `Any`; callee projected at the call site
+- [x] `test_reveal_casts.cpp` — no `Inject`/`Project`/predicate survives;
+      projections lower to tag test + `ValueOf` else `Exit`; bounds checks
+- [x] `test_parser.cpp` — dyn grammar accepted, annotations rejected;
+      `Any`/`inject`/`project`/predicates in static mode
+- [x] `test_type_checker.cpp` — 13 L_Any rules and rejections
+- [x] `test_interpreter.cpp` — tagged arithmetic, predicates, trapped errors
+- [x] `test_pipeline.cpp` — `DynArithLowers`, `DynProjectTraps`,
+      `DynVectorBoundsCheck`, `DynTypePredicateLowersToTagTest`
+- [x] 10 `.mc` programs in `tests/programs/phase8/` (Exercise 9.1): 5 adapted
+      from earlier phases, 5 that no static type checker would accept;
+      `mc -i --dyn` output matches the compiled exit status for all 10
+
+### 8 — Z3 Predicate Tests ✅
+
+- [x] `scalar_tag_roundtrip` — ∀v ∈ [−2⁶⁰, 2⁶⁰): `((v<<3)|001) >>ₐ 3 == v`
+- [x] `pointer_tag_roundtrip` / `tag_of_any_recovers_the_tag`
+- [x] `tags_pairwise_distinct_and_nonzero`, `tags_fit_in_three_bits`
+- [x] `project_traps_iff_tag_mismatch`
+- [x] `collect_preserves_tag_bits`
+
+### 8 — Lean Stubs ✅
+
+- [x] `AST.lean` — `Ty.any`, `TypePred`, the ten L_Any `Expr` constructors
+- [x] `Passes/Tagging.lean` — `tagof`/`isFlat` + `tags_are_nonzero` (proven),
+      `scalar_tag_roundtrip` (proven), `tagof_injective_on_flat`
+- [x] `Passes/CastInsert.lean` — `castInsert` + `cast_insert_types_any`,
+      `cast_insert_uses_flat_types` (sorry)
+- [x] `Passes/RevealCasts.lean` — `revealCasts` + `reveal_casts_no_casts`,
+      `project_inject_roundtrip`, `project_mismatch_exits`
+- [x] `TypeChecker.lean` — fig 9.6 rules added
+
+### 8 — Known Limitations
+
+- Dynamic integers are 61-bit (3 bits are stolen for the tag), silently
+- `--dyn` requires the program's value to be an `Int`; a non-integer top level
+  is a trapped error, since the value becomes the process exit status
+- `procedure_arity` in dyn mode is a non-book extension: a tag check followed
+  by an arity read from the closure's heap tag
+- Static-mode `Any`/`inject`/`project` syntax overlaps Phase 9 (gradual typing)
+
+### 8 — Bugs Fixed Along The Way
+
+- `vector(a, b)` with variable elements aborted in `expose_allocation`
+  (pre-existing since Phase 5); it now threads a variable-type environment
+- A `set!` whose value needs its own basic blocks compiled to `0` in
+  `explicate_control` (assign, effect and begin-effect positions)
+- `readability-function-size` had never passed on a clean build; the 47
+  dispatch functions now carry an explicit `NOLINTNEXTLINE` for the
+  enum-switch FSM exemption in CLAUDE.md
 
 ---
 

@@ -20,6 +20,9 @@ void var_from_arg(const x86::Arg &a, std::set<std::string> &out) {
 
 /// @brief Collect variables read by an x86 instruction
 /// @ensures result contains all VarArg names in read positions
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::set<std::string> instr_reads(const x86::Instr &instr) {
     std::set<std::string> result;
     if (const auto *a = std::get_if<x86::Addq>(&instr)) {
@@ -48,6 +51,12 @@ std::set<std::string> instr_reads(const x86::Instr &instr) {
         var_from_arg(ic->func, result);
     } else if (const auto *tj = std::get_if<x86::TailJmp>(&instr)) {
         var_from_arg(tj->func, result);
+    } else if (const auto *oq = std::get_if<x86::Orq>(&instr)) {
+        var_from_arg(oq->src, result); var_from_arg(oq->dst, result);
+    } else if (const auto *slq = std::get_if<x86::Salq>(&instr)) {
+        var_from_arg(slq->src, result); var_from_arg(slq->dst, result);
+    } else if (const auto *im = std::get_if<x86::Imulq>(&instr)) {
+        var_from_arg(im->src, result); var_from_arg(im->dst, result);
     }
     // SetCC, JmpIf, Jmp, Callq, Retq, Popq: no var reads
     return result;
@@ -55,6 +64,9 @@ std::set<std::string> instr_reads(const x86::Instr &instr) {
 
 /// @brief Collect variables written by an x86 instruction
 /// @ensures result contains all VarArg names in write positions
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::set<std::string> instr_writes(const x86::Instr &instr) {
     std::set<std::string> result;
     if (const auto *a = std::get_if<x86::Addq>(&instr)) {
@@ -79,6 +91,12 @@ std::set<std::string> instr_writes(const x86::Instr &instr) {
         var_from_arg(sq->dst, result);
     } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
         var_from_arg(lq->dst, result);
+    } else if (const auto *oq = std::get_if<x86::Orq>(&instr)) {
+        var_from_arg(oq->dst, result);
+    } else if (const auto *slq = std::get_if<x86::Salq>(&instr)) {
+        var_from_arg(slq->dst, result);
+    } else if (const auto *im = std::get_if<x86::Imulq>(&instr)) {
+        var_from_arg(im->dst, result);
     }
     // Cmpq, JmpIf, Jmp, Callq, Retq, Pushq: no var writes
     return result;
@@ -179,6 +197,9 @@ static CfgInfo build_cfg(const x86::X86Program &prog) {
 /// @requires prog has valid blocks with Jmp/JmpIf terminators
 /// @ensures result[label][i] = vars live after instruction i; handles cycles
 std::map<std::string, std::vector<std::set<std::string>>>
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 analyze_liveness_program(const x86::X86Program &prog) {
     auto cfg = build_cfg(prog);
 

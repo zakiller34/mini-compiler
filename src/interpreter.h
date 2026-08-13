@@ -5,6 +5,7 @@
 #include <istream>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -28,8 +29,24 @@ struct FunctionValue {
     }
 };
 
+/// A value of type `Any`: the underlying value plus its runtime tag
+/// (Siek 2023, section 9.1). Held by shared_ptr so Value stays complete.
+struct TaggedData;
+using TaggedValue = std::shared_ptr<TaggedData>;
+
 using Value = std::variant<int64_t, bool, std::monostate, Tuple, FunctionValue,
-                           ClosureRef>;
+                           ClosureRef, TaggedValue>;
+
+struct TaggedData {
+    Value value;
+    TypePred tag;
+};
+
+/// @brief Raised by a dynamic type error; the compiled code exits with 255
+class TrappedError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct TupleData {
     std::vector<Value> elems;

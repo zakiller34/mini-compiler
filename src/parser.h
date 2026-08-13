@@ -39,16 +39,27 @@ class ParseError : public std::runtime_error {
 ///   program  → def* expr EOF
 ///   def      → FN IDENT '(' params ')' ':' type '{' expr '}'
 ///   params   → (IDENT ':' type (',' IDENT ':' type)*)?
-///   type     → INT_KW | BOOL_KW | VOID | '(' types ')' '->' type
+///   type     → INT_KW | BOOL_KW | VOID | ANY_KW | '(' types ')' '->' type
 ///   args     → (expr (',' expr)*)?
+///
+/// L_Any additions (static mode only):
+///   primary  → INJECT '(' expr ',' type ')' | PROJECT '(' expr ',' type ')'
+///            | (INTEGER_P|BOOLEAN_P|VECTOR_P|PROCEDURE_P|VOID_P) '(' expr ')'
+///
+/// L_Dyn mode (`dyn == true`, selected by `mc --dyn`): all type annotations
+/// are absent and every binder is implicitly `Any`.
+///   def      → FN IDENT '(' idents ')' '{' expr '}'
+///   primary  → LAMBDA '(' idents ')' '{' expr '}'
+///   postfix  → primary ('[' expr ']' ('=' expr)? | '(' args ')')*
 class Parser {
   public:
-    explicit Parser(Lexer &lex);
+    explicit Parser(Lexer &lex, bool dyn = false);
     std::unique_ptr<Program> parse_program();
 
   private:
     Lexer &lex_;
     Token cur_;
+    bool dyn_;
 
     void advance();
     void expect(TokenKind kind, const std::string &msg);
@@ -62,8 +73,13 @@ class Parser {
     std::unique_ptr<Expr> parse_postfix();
     std::unique_ptr<Expr> parse_primary();
     TypePtr parse_type();
+    TypePtr parse_fun_type();
+    TypePtr parse_annotation();
     std::vector<std::pair<std::string, TypePtr>> parse_params();
     DefNode parse_def();
+    std::unique_ptr<Expr> parse_cast();
+    std::unique_ptr<Expr> parse_type_pred(TypePred pred);
+    std::unique_ptr<Expr> parse_subscript(std::unique_ptr<Expr> vec);
 };
 
 } // namespace mc

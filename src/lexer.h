@@ -49,6 +49,14 @@ enum class TokenKind {
     Bool_kw,
     Lambda,
     ProcArity,
+    Any_kw,
+    Inject,
+    Project,
+    IntegerP,
+    BooleanP,
+    VectorP,
+    ProcedureP,
+    VoidP,
     Eof,
     Error
 };

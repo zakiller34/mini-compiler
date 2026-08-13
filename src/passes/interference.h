@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "../ir/x86_ir.h"
+#include "../type.h"
 
 namespace mc {
 
@@ -35,8 +36,12 @@ struct Graph {
 /// @requires live_after from analyze_liveness, instrs from same block
 /// @ensures edge(u,v) iff u,v simultaneously live; movq special handling
 /// @ensures callq: edges between live vars and caller-saved regs
+/// @ensures a var of type Any live across a call interferes with every
+///          allocable register, forcing it onto the root stack (Siek 9.9)
 Graph build_interference(const std::vector<x86::Instr> &instrs,
-                         const std::vector<std::set<std::string>> &live_after);
+                         const std::vector<std::set<std::string>> &live_after,
+                         const std::map<std::string, TypePtr> *var_types
+                             = nullptr);
 
 /// Caller-saved registers that get clobbered by callq
 const std::vector<x86::Reg> &caller_saved_regs();

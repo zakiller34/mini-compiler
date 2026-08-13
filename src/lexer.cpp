@@ -38,6 +38,8 @@ void Lexer::skip_ws() {
 
 /// @brief Get next token
 /// @ensures result is valid Token
+// Character/keyword dispatch FSM: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
 Token Lexer::next() {
     skip_ws();
 
@@ -98,6 +100,11 @@ Token Lexer::next() {
             id += static_cast<char>(cur_);
             advance();
         }
+        // A trailing '?' is part of the name, so `integer?` lexes as one token
+        if (cur_ == '?') {
+            id += '?';
+            advance();
+        }
         if (id == "let") { return {TokenKind::Let, id, 0}; }
         if (id == "read") { return {TokenKind::Read, id, 0}; }
         if (id == "in") { return {TokenKind::In, id, 0}; }
@@ -119,6 +126,14 @@ Token Lexer::next() {
         if (id == "Bool") { return {TokenKind::Bool_kw, id, 0}; }
         if (id == "lambda") { return {TokenKind::Lambda, id, 0}; }
         if (id == "procedure_arity") { return {TokenKind::ProcArity, id, 0}; }
+        if (id == "Any") { return {TokenKind::Any_kw, id, 0}; }
+        if (id == "inject") { return {TokenKind::Inject, id, 0}; }
+        if (id == "project") { return {TokenKind::Project, id, 0}; }
+        if (id == "integer?") { return {TokenKind::IntegerP, id, 0}; }
+        if (id == "boolean?") { return {TokenKind::BooleanP, id, 0}; }
+        if (id == "vector?") { return {TokenKind::VectorP, id, 0}; }
+        if (id == "procedure?") { return {TokenKind::ProcedureP, id, 0}; }
+        if (id == "void?") { return {TokenKind::VoidP, id, 0}; }
         return {TokenKind::Ident, id, 0};
     }
 

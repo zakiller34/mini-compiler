@@ -21,6 +21,8 @@ set(TEST_SOURCES
     test_free_vars
     test_convert_assignments
     test_closure_conversion
+    test_cast_insert
+    test_reveal_casts
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)

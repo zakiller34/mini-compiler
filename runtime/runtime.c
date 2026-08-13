@@ -15,6 +15,13 @@ int64_t read_int(void) {
 /// @requires x is a valid int64_t
 void print_int(int64_t x) { printf("%ld\n", x); }
 
+/// @brief Halt on a dynamic type error (Siek 2023, section 1.5)
+/// @ensures never returns; process exit status is 255
+void trapped_error(int64_t status) {
+    (void)status;
+    exit(255);
+}
+
 /* ---- GC globals ---- */
 
 int64_t *free_ptr = NULL;
@@ -36,6 +43,25 @@ static int tag_is_ptr(int64_t tag, int64_t i) {
 
 /// @brief Check if tag is a forwarding pointer (bit 0)
 static int tag_is_fwd(int64_t tag) { return tag & 1; }
+
+/* ---- Tagged values (Siek 2023, chapter 9) ----
+ * A slot the compiler marked as a pointer holds either an untagged tuple
+ * pointer (low 3 bits 000, which is why tagof never uses 000) or a value of
+ * type Any. Only the Vector (010) and Procedure (011) tags point into the
+ * heap; Integer/Boolean/Void tags carry immediate data and must be skipped.
+ * Collection must preserve the low 3 bits so the mutator keeps seeing the
+ * same tag after the object moves.
+ */
+
+#define VALUE_TAG_MASK 7
+#define TAG_VECTOR 2
+#define TAG_PROCEDURE 3
+
+/// @brief Whether a marked slot value points into the heap
+static int slot_is_heap_ref(int64_t slot) {
+    int64_t tag = slot & VALUE_TAG_MASK;
+    return tag == 0 || tag == TAG_VECTOR || tag == TAG_PROCEDURE;
+}
 
 /* ---- Cheney copy ---- */
 
@@ -68,11 +94,14 @@ static void scan_tuple(int64_t *tuple, int64_t **scan_ptr) {
     int64_t tag = tuple[0];
     int64_t len = tag_length(tag);
     for (int64_t i = 0; i < len; ++i) {
-        if (tag_is_ptr(tag, i)) {
-            int64_t *child = (int64_t *)tuple[i + 1];
-            if (child >= fromspace_begin && child < fromspace_end) {
-                tuple[i + 1] = (int64_t)copy_tuple(child, scan_ptr);
-            }
+        if (!tag_is_ptr(tag, i)) continue;
+        int64_t slot = tuple[i + 1];
+        if (!slot_is_heap_ref(slot)) continue; /* tagged immediate */
+        int64_t vtag = slot & VALUE_TAG_MASK;
+        int64_t *child = (int64_t *)(slot & ~(int64_t)VALUE_TAG_MASK);
+        if (child >= fromspace_begin && child < fromspace_end) {
+            int64_t moved = (int64_t)copy_tuple(child, scan_ptr);
+            tuple[i + 1] = moved | vtag; /* keep the value's tag bits */
         }
     }
 }
@@ -101,11 +130,12 @@ void collect(int64_t *rootstack_ptr, int64_t bytes) {
 
     /* Phase 1: copy root set */
     for (int64_t *rp = rootstack_begin; rp < rootstack_ptr; ++rp) {
-        if (*rp != 0) {
-            int64_t *tuple = (int64_t *)*rp;
-            if (tuple >= fromspace_begin && tuple < fromspace_end) {
-                *rp = (int64_t)copy_tuple(tuple, &alloc);
-            }
+        if (*rp == 0) continue;
+        if (!slot_is_heap_ref(*rp)) continue; /* tagged immediate */
+        int64_t vtag = *rp & VALUE_TAG_MASK;
+        int64_t *tuple = (int64_t *)(*rp & ~(int64_t)VALUE_TAG_MASK);
+        if (tuple >= fromspace_begin && tuple < fromspace_end) {
+            *rp = (int64_t)copy_tuple(tuple, &alloc) | vtag;
         }
     }
 

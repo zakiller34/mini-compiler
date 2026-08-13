@@ -42,12 +42,24 @@ struct CTailCallExpr { Atom func; std::vector<Atom> args; };
 struct CAllocateClosureExpr { int64_t len; TypePtr type; int64_t arity; };
 struct CProcArityExpr { Atom clos; };
 
+// -- C_Any expressions (Siek 2023, figure 9.11) --
+
+struct CMakeAnyExpr { Atom value; int64_t tag; };
+struct CTagOfAnyExpr { Atom value; };
+struct CValueOfExpr { Atom value; TypePtr ftype; };
+struct CAnyVectorRefExpr { Atom vec; Atom idx; };
+struct CAnyVectorSetExpr { Atom vec; Atom idx; Atom val; };
+struct CAnyVectorLengthExpr { Atom vec; };
+
 using CExpr = std::variant<AtomExpr, CReadExpr, CUnaryExpr, CBinaryExpr,
                            CCmpExpr, CNotExpr,
                            CAllocateExpr, CVectorRefExpr, CVectorSetExpr,
                            CVectorLengthExpr, CGlobalValueExpr,
                            CCollectExpr, CFunRefExpr, CCallExpr,
-                           CAllocateClosureExpr, CProcArityExpr>;
+                           CAllocateClosureExpr, CProcArityExpr,
+                           CMakeAnyExpr, CTagOfAnyExpr, CValueOfExpr,
+                           CAnyVectorRefExpr, CAnyVectorSetExpr,
+                           CAnyVectorLengthExpr>;
 
 // -- Statements --
 
@@ -65,8 +77,10 @@ struct IfStmt {
     std::string else_label;
 };
 struct TailCall { Atom func; std::vector<Atom> args; };
+/// Trapped error: halt with status 255 (Siek 2023, section 9.5)
+struct Exit {};
 
-using Tail = std::variant<Return, Goto, IfStmt, TailCall>;
+using Tail = std::variant<Return, Goto, IfStmt, TailCall, Exit>;
 
 // -- Basic block --
 

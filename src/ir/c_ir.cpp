@@ -25,6 +25,37 @@ static const char *cmp_op_name(CCmpOp op) {
     return "?";
 }
 
+/// @brief Dump the C_Any expressions (figure 9.11)
+/// @ensures "?" if e is not one of them
+static std::string dump_any_cexpr(const CExpr &e) {
+    if (const auto *ma = std::get_if<CMakeAnyExpr>(&e)) {
+        return "(make-any " + dump_atom(ma->value) + " " +
+               std::to_string(ma->tag) + ")";
+    }
+    if (const auto *ta = std::get_if<CTagOfAnyExpr>(&e)) {
+        return "(tag-of-any " + dump_atom(ta->value) + ")";
+    }
+    if (const auto *vo = std::get_if<CValueOfExpr>(&e)) {
+        return "(value-of " + dump_atom(vo->value) + " " +
+               vo->ftype->dump() + ")";
+    }
+    if (const auto *ar = std::get_if<CAnyVectorRefExpr>(&e)) {
+        return "(any-vector-ref " + dump_atom(ar->vec) + " " +
+               dump_atom(ar->idx) + ")";
+    }
+    if (const auto *as = std::get_if<CAnyVectorSetExpr>(&e)) {
+        return "(any-vector-set! " + dump_atom(as->vec) + " " +
+               dump_atom(as->idx) + " " + dump_atom(as->val) + ")";
+    }
+    if (const auto *al = std::get_if<CAnyVectorLengthExpr>(&e)) {
+        return "(any-vector-length " + dump_atom(al->vec) + ")";
+    }
+    return "?";
+}
+
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::string dump_cexpr(const CExpr &e) {
     if (const auto *ae = std::get_if<AtomExpr>(&e)) {
         return dump_atom(ae->atom);
@@ -84,7 +115,7 @@ std::string dump_cexpr(const CExpr &e) {
     if (const auto *pa = std::get_if<CProcArityExpr>(&e)) {
         return "(procedure-arity " + dump_atom(pa->clos) + ")";
     }
-    return "?";
+    return dump_any_cexpr(e);
 }
 
 std::string dump_tail(const Tail &t) {
@@ -98,6 +129,9 @@ std::string dump_tail(const Tail &t) {
         std::string r = "(tail-call " + dump_atom(tc->func);
         for (const auto &a : tc->args) r += " " + dump_atom(a);
         return r + ")";
+    }
+    if (std::holds_alternative<Exit>(t)) {
+        return "(exit)";
     }
     const auto &is = std::get<IfStmt>(t);
     return std::string("(if (") + cmp_op_name(is.op) + " " +

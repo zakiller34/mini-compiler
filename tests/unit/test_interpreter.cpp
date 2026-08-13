@@ -6,6 +6,7 @@
 
 #include "ast.h"
 #include "interpreter.h"
+#include "passes/cast_insert.h"
 
 using namespace mc;
 
@@ -347,4 +348,111 @@ TEST(Interpreter, ProcedureArity) {
                                      std::make_unique<VarExpr>("b")));
     auto body = std::make_unique<ProcArityExpr>(std::move(lam));
     EXPECT_EQ(run(std::move(body)), 2);
+}
+
+// ---- Phase 8: tagged values and trapped errors ----
+
+/// Helper: cast-insert then interpret, returning the tagged result.
+static Value run_dyn(std::unique_ptr<Expr> body,
+                     std::vector<DefNode> defs = {}) {
+    Program prog(std::move(defs), std::move(body));
+    auto casted = cast_insert(prog);
+    std::istringstream in("");
+    return interpret(*casted, in);
+}
+
+/// Helper: unwrap a tagged Int result.
+static int64_t dyn_int(std::unique_ptr<Expr> body) {
+    Value v = run_dyn(std::move(body));
+    const auto &tagged = std::get<TaggedValue>(v);
+    EXPECT_EQ(tagged->tag, TypePred::Integer);
+    return std::get<int64_t>(tagged->value);
+}
+
+TEST(InterpreterDyn, TaggedArithmetic) {
+    EXPECT_EQ(dyn_int(std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<IntExpr>(40),
+        std::make_unique<IntExpr>(2))), 42);
+}
+
+TEST(InterpreterDyn, ConditionalUsesFalsinessOfInjectedFalse) {
+    EXPECT_EQ(dyn_int(std::make_unique<IfExpr>(
+        std::make_unique<BoolExpr>(true), std::make_unique<IntExpr>(7),
+        std::make_unique<IntExpr>(3))), 7);
+    EXPECT_EQ(dyn_int(std::make_unique<IfExpr>(
+        std::make_unique<BoolExpr>(false), std::make_unique<IntExpr>(7),
+        std::make_unique<IntExpr>(3))), 3);
+}
+
+TEST(InterpreterDyn, TypePredicatesSeeTheRuntimeTag) {
+    auto is_int = std::make_unique<TypePredExpr>(
+        TypePred::Integer, std::make_unique<IntExpr>(1));
+    Value v = run_dyn(std::move(is_int));
+    const auto &tagged = std::get<TaggedValue>(v);
+    EXPECT_EQ(tagged->tag, TypePred::Boolean);
+    EXPECT_TRUE(std::get<bool>(tagged->value));
+
+    auto is_bool = std::make_unique<TypePredExpr>(
+        TypePred::Boolean, std::make_unique<IntExpr>(1));
+    Value v2 = run_dyn(std::move(is_bool));
+    EXPECT_FALSE(std::get<bool>(std::get<TaggedValue>(v2)->value));
+}
+
+TEST(InterpreterDyn, AddingABoolTraps) {
+    auto body = std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<BoolExpr>(true),
+        std::make_unique<IntExpr>(1));
+    EXPECT_THROW(run_dyn(std::move(body)), TrappedError);
+}
+
+TEST(InterpreterDyn, TupleIndexOutOfBoundsTraps) {
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    auto body = std::make_unique<AnyVectorRefExpr>(
+        std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<IntExpr>(5));
+    EXPECT_THROW(run_dyn(std::move(body)), TrappedError);
+}
+
+TEST(InterpreterDyn, TupleReadWithARuntimeIndex) {
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(10));
+    elems.push_back(std::make_unique<IntExpr>(20));
+    auto body = std::make_unique<AnyVectorRefExpr>(
+        std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                      std::make_unique<IntExpr>(0),
+                                      std::make_unique<IntExpr>(1)));
+    Value v = run_dyn(std::move(body));
+    const auto &tagged = std::get<TaggedValue>(v);
+    EXPECT_EQ(std::get<int64_t>(tagged->value), 20);
+}
+
+TEST(InterpreterDyn, CallingWithTheWrongArityTraps) {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    params.emplace_back("a", any_type());
+    auto lam = std::make_unique<LambdaExpr>(
+        std::move(params), any_type(), std::make_unique<VarExpr>("a"));
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(1));
+    args.push_back(std::make_unique<IntExpr>(2));
+    auto body = std::make_unique<LetExpr>(
+        "f", std::move(lam),
+        std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("f"),
+                                     std::move(args)));
+    EXPECT_THROW(run_dyn(std::move(body)), TrappedError);
+}
+
+TEST(InterpreterDyn, TaggedEqualityComparesTagAndPayload) {
+    auto body = std::make_unique<BinaryExpr>(
+        BinaryOp::Eq, std::make_unique<IntExpr>(3),
+        std::make_unique<IntExpr>(3));
+    Value v = run_dyn(std::move(body));
+    EXPECT_TRUE(std::get<bool>(std::get<TaggedValue>(v)->value));
+
+    auto mixed = std::make_unique<BinaryExpr>(
+        BinaryOp::Eq, std::make_unique<IntExpr>(1),
+        std::make_unique<BoolExpr>(true));
+    Value v2 = run_dyn(std::move(mixed));
+    EXPECT_FALSE(std::get<bool>(std::get<TaggedValue>(v2)->value));
 }

@@ -49,6 +49,8 @@ def replace_vars (mvars : List String) : Expr → Expr
   | .lambda ps rt b => .lambda ps rt (replace_vars mvars b)
   | .procArity e => .procArity (replace_vars mvars e)
   | .closure a es => .closure a (es.map (replace_vars mvars))
+  -- Phase 8 (L_Any) nodes bind no variables
+  | e => e
 
 /-- Top-level uncover_get. -/
 def uncover_get (p : Program) : Program :=

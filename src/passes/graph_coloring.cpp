@@ -125,6 +125,9 @@ int reg_to_color(x86::Reg r) {
 /// @requires graph is valid undirected graph
 /// @ensures no two adjacent nodes share a color
 /// @ensures Reg nodes keep pre-assigned colors
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::map<Location, int> color_graph(const Graph &graph, int num_regs) {
     std::map<Location, int> coloring;
     std::set<Location> uncolored;

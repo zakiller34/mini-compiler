@@ -49,6 +49,9 @@ void patch_two_arg(const x86::Arg &src, const x86::Arg &dst,
     }
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
     const x86::Arg rax = x86::RegArg{x86::Reg::Rax};
 
@@ -97,6 +100,21 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
     } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
         // leaq src, dst — dst must be reg
         out.push_back(instr);
+    } else if (const auto *oq = std::get_if<x86::Orq>(&instr)) {
+        patch_two_arg(oq->src, oq->dst,
+            [](auto s, auto d) { return x86::Instr{x86::Orq{s, d}}; }, out);
+    } else if (const auto *slq = std::get_if<x86::Salq>(&instr)) {
+        // salq only needs src as imm or %cl, dst can be mem
+        out.push_back(instr);
+    } else if (const auto *im = std::get_if<x86::Imulq>(&instr)) {
+        // imulq dst must be a register; route a memory dst through %rax
+        if (is_mem(im->dst)) {
+            out.push_back(x86::Movq{im->dst, rax});
+            out.push_back(x86::Imulq{im->src, rax});
+            out.push_back(x86::Movq{rax, im->dst});
+        } else {
+            out.push_back(instr);
+        }
     } else {
         out.push_back(instr);
     }
@@ -104,6 +122,9 @@ void patch_one(const x86::Instr &instr, std::vector<x86::Instr> &out) {
 
 } // namespace
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 x86::X86Program patch_instructions(const x86::X86Program &prog) {
     x86::X86Program result;
     result.stack_space = prog.stack_space;

@@ -21,6 +21,18 @@ const char *unary_op_name(UnaryOp op) {
     return (op == UnaryOp::Neg) ? "-" : "not";
 }
 
+/// @brief Get S-expr name for a runtime type predicate
+const char *type_pred_name(TypePred p) {
+    switch (p) {
+    case TypePred::Integer: return "integer?";
+    case TypePred::Boolean: return "boolean?";
+    case TypePred::Vector: return "vector?";
+    case TypePred::Procedure: return "procedure?";
+    case TypePred::Void: return "void?";
+    }
+    return "?";
+}
+
 /// @brief Get S-expr name for a binary op
 const char *binary_op_name(BinaryOp op) {
     switch (op) {
@@ -81,8 +93,94 @@ void push_let(const LetExpr *le, std::string &out,
   tasks.push_back({Action::Visit, le->init.get(), ""});
 }
 
+/// @brief Push tasks for the L_Any nodes (enum-switch FSM)
+/// @requires e != nullptr and e->kind() is an L_Any node kind
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
+void push_any_node(const Expr *e, std::string &out, std::vector<Task> &tasks) {
+  switch (e->kind()) {
+  case NodeKind::Inject: {
+    const auto *ie = expr_cast<InjectExpr>(e);
+    out += "(inject ";
+    tasks.push_back({Action::Append, nullptr, " " + ie->ftype->dump() + ")"});
+    tasks.push_back({Action::Visit, ie->expr.get(), ""});
+    break;
+  }
+  case NodeKind::Project: {
+    const auto *pe = expr_cast<ProjectExpr>(e);
+    out += "(project ";
+    tasks.push_back({Action::Append, nullptr, " " + pe->ftype->dump() + ")"});
+    tasks.push_back({Action::Visit, pe->expr.get(), ""});
+    break;
+  }
+  case NodeKind::TypePredicate: {
+    const auto *tp = expr_cast<TypePredExpr>(e);
+    out += std::string("(") + type_pred_name(tp->pred) + " ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, tp->expr.get(), ""});
+    break;
+  }
+  case NodeKind::AnyVectorRef: {
+    const auto *ar = expr_cast<AnyVectorRefExpr>(e);
+    out += "(any-vector-ref ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, ar->idx.get(), ""});
+    tasks.push_back({Action::Append, nullptr, " "});
+    tasks.push_back({Action::Visit, ar->vec.get(), ""});
+    break;
+  }
+  case NodeKind::AnyVectorSet: {
+    const auto *as = expr_cast<AnyVectorSetExpr>(e);
+    out += "(any-vector-set! ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, as->val.get(), ""});
+    tasks.push_back({Action::Append, nullptr, " "});
+    tasks.push_back({Action::Visit, as->idx.get(), ""});
+    tasks.push_back({Action::Append, nullptr, " "});
+    tasks.push_back({Action::Visit, as->vec.get(), ""});
+    break;
+  }
+  case NodeKind::AnyVectorLength: {
+    const auto *al = expr_cast<AnyVectorLengthExpr>(e);
+    out += "(any-vector-length ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, al->vec.get(), ""});
+    break;
+  }
+  case NodeKind::MakeAny: {
+    const auto *ma = expr_cast<MakeAnyExpr>(e);
+    out += "(make-any ";
+    tasks.push_back({Action::Append, nullptr,
+        " " + std::to_string(ma->tag) + ")"});
+    tasks.push_back({Action::Visit, ma->expr.get(), ""});
+    break;
+  }
+  case NodeKind::TagOfAny: {
+    const auto *ta = expr_cast<TagOfAnyExpr>(e);
+    out += "(tag-of-any ";
+    tasks.push_back({Action::Append, nullptr, ")"});
+    tasks.push_back({Action::Visit, ta->expr.get(), ""});
+    break;
+  }
+  case NodeKind::ValueOf: {
+    const auto *vo = expr_cast<ValueOfExpr>(e);
+    out += "(value-of ";
+    tasks.push_back({Action::Append, nullptr, " " + vo->ftype->dump() + ")"});
+    tasks.push_back({Action::Visit, vo->expr.get(), ""});
+    break;
+  }
+  case NodeKind::Exit:
+    out += "(exit)";
+    break;
+  default:
+    break;
+  }
+}
+
 /// @brief Dispatch a single Visit: either append leaf or push children
 /// @requires e != nullptr
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
 void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
   switch (e->kind()) {
   case NodeKind::Int:
@@ -245,6 +343,18 @@ void dispatch(const Expr *e, std::string &out, std::vector<Task> &tasks) {
            ac->type->dump() + " " + std::to_string(ac->arity) + ")";
     break;
   }
+  case NodeKind::Inject:
+  case NodeKind::Project:
+  case NodeKind::TypePredicate:
+  case NodeKind::AnyVectorRef:
+  case NodeKind::AnyVectorSet:
+  case NodeKind::AnyVectorLength:
+  case NodeKind::MakeAny:
+  case NodeKind::TagOfAny:
+  case NodeKind::ValueOf:
+  case NodeKind::Exit:
+    push_any_node(e, out, tasks);
+    break;
   }
 }
 
@@ -324,6 +434,26 @@ std::string ProcArityExpr::dump() const { return dump_iterative(this); }
 std::string ClosureExpr::dump() const { return dump_iterative(this); }
 
 std::string AllocateClosureExpr::dump() const { return dump_iterative(this); }
+
+std::string InjectExpr::dump() const { return dump_iterative(this); }
+
+std::string ProjectExpr::dump() const { return dump_iterative(this); }
+
+std::string TypePredExpr::dump() const { return dump_iterative(this); }
+
+std::string AnyVectorRefExpr::dump() const { return dump_iterative(this); }
+
+std::string AnyVectorSetExpr::dump() const { return dump_iterative(this); }
+
+std::string AnyVectorLengthExpr::dump() const { return dump_iterative(this); }
+
+std::string MakeAnyExpr::dump() const { return dump_iterative(this); }
+
+std::string TagOfAnyExpr::dump() const { return dump_iterative(this); }
+
+std::string ValueOfExpr::dump() const { return dump_iterative(this); }
+
+std::string ExitExpr::dump() const { return dump_iterative(this); }
 
 std::string DefNode::dump() const {
   std::string result = "(def " + name + " (";

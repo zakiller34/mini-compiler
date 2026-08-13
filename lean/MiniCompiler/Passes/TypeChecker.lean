@@ -1,4 +1,5 @@
 import MiniCompiler.AST
+import MiniCompiler.Passes.Tagging
 
 /-!
 # Type Checker — L_While
@@ -109,6 +110,38 @@ def type_check_env : TypeEnv → Expr → Option Ty
     | .fun _ _ => some .int
     | _ => none
   | _, .closure _ _ => none -- introduced post-typecheck, stub
+  -- Phase 8 (L_Any): Siek 2023, figure 9.6
+  | env, .inject e t => do
+    let et ← type_check_env env e
+    if isFlat t && et == t then some .any else none
+  | env, .project e t => do
+    let et ← type_check_env env e
+    if isFlat t && et == .any then some t else none
+  | env, .typePred _ e => do
+    let et ← type_check_env env e
+    if et == .any then some .bool else none
+  | env, .anyVectorRef v i => do
+    let vt ← type_check_env env v
+    let it ← type_check_env env i
+    if vt == .any && it == .int then some .any else none
+  | env, .anyVectorSet v i x => do
+    let vt ← type_check_env env v
+    let it ← type_check_env env i
+    let xt ← type_check_env env x
+    if vt == .any && it == .int && xt == .any then some .void else none
+  | env, .anyVectorLength v => do
+    let vt ← type_check_env env v
+    if vt == .any then some .int else none
+  | env, .makeAny e _ => do
+    let _ ← type_check_env env e
+    some .any
+  | env, .tagOfAny e => do
+    let t ← type_check_env env e
+    if t == .any then some .int else none
+  | env, .valueOf e t => do
+    let et ← type_check_env env e
+    if et == .any then some t else none
+  | _, .exit_ => some .void -- Exit halts; its type is never observed
 
 /-- Top-level type check. -/
 def type_check (e : Expr) : Option Ty := type_check_env [] e

@@ -1,5 +1,7 @@
 #include "convert_to_closures.h"
 
+#include "any_rebuild.h"
+
 #include "free_vars.h"
 
 #include <algorithm>
@@ -61,7 +63,8 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild, ProcArityBuild,
-                           LambdaBuild, ApplyBuild, DirectApplyBuild>;
+                           LambdaBuild, ApplyBuild, DirectApplyBuild,
+                           AnyBuildFrame>;
 
 /// @brief Build closure tuple: [FunRef(name, arity+1), Var(fv)...].
 std::unique_ptr<Expr> build_closure(int64_t arity, const std::string &name,
@@ -104,8 +107,12 @@ std::vector<std::unique_ptr<Expr>> pop_n(
 
 /// @brief Evaluate leaf or push continuation frames for closure conversion.
 /// @requires ef.expr != nullptr
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const Expr *e, std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results, ClosState &st) {
+    if (push_any_eval<EvalFrame>(e, stack)) return;
     switch (e->kind()) {
     case NodeKind::Int:
         results.push_back(std::make_unique<IntExpr>(expr_cast<IntExpr>(e)->value));
@@ -249,9 +256,14 @@ void push_eval(const Expr *e, std::vector<Frame> &stack,
 }
 
 /// @brief Rebuild a converted node from its children on the results stack.
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results, ClosState &st) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+    if (auto *anyb = std::get_if<AnyBuildFrame>(&frame)) {
+        build_any(*anyb, results);
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto o = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<UnaryExpr>(ub->op, std::move(o)));
     } else if (auto *bl = std::get_if<BinBuildLhs>(&frame)) {

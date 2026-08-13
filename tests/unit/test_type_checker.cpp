@@ -509,3 +509,104 @@ TEST(TypeChecker, ProcArityOnNonFunctionRejected) {
     auto e = std::make_unique<ProcArityExpr>(std::make_unique<IntExpr>(5));
     EXPECT_THROW(check_full(std::move(e)), TypeError);
 }
+
+// ---- Phase 8: L_Any typing rules (Siek 2023, figure 9.6) ----
+
+TEST(TypeCheckerAny, InjectFromFlatTypeYieldsAny) {
+    Program p(std::make_unique<InjectExpr>(std::make_unique<IntExpr>(1),
+                                            int_type()));
+    EXPECT_EQ(*type_check(p), *any_type());
+}
+
+TEST(TypeCheckerAny, InjectRejectsAMismatchedOperand) {
+    Program p(std::make_unique<InjectExpr>(std::make_unique<BoolExpr>(true),
+                                            int_type()));
+    EXPECT_THROW(type_check(p), TypeError);
+}
+
+TEST(TypeCheckerAny, InjectRejectsANonFlatType) {
+    Program p(std::make_unique<InjectExpr>(std::make_unique<IntExpr>(1),
+                                            any_type()));
+    EXPECT_THROW(type_check(p), TypeError);
+}
+
+TEST(TypeCheckerAny, ProjectFromAnyYieldsTheTargetType) {
+    auto inj = std::make_unique<InjectExpr>(std::make_unique<IntExpr>(1),
+                                             int_type());
+    Program p(std::make_unique<ProjectExpr>(std::move(inj), int_type()));
+    EXPECT_EQ(*type_check(p), *int_type());
+}
+
+TEST(TypeCheckerAny, ProjectRejectsANonAnyOperand) {
+    Program p(std::make_unique<ProjectExpr>(std::make_unique<IntExpr>(1),
+                                             int_type()));
+    EXPECT_THROW(type_check(p), TypeError);
+}
+
+TEST(TypeCheckerAny, TypePredicateOnAnyYieldsBool) {
+    auto inj = std::make_unique<InjectExpr>(std::make_unique<IntExpr>(1),
+                                             int_type());
+    Program p(std::make_unique<TypePredExpr>(TypePred::Integer,
+                                              std::move(inj)));
+    EXPECT_EQ(*type_check(p), *bool_type());
+}
+
+TEST(TypeCheckerAny, TypePredicateRejectsAStaticallyTypedOperand) {
+    Program p(std::make_unique<TypePredExpr>(TypePred::Integer,
+                                              std::make_unique<IntExpr>(1)));
+    EXPECT_THROW(type_check(p), TypeError);
+}
+
+TEST(TypeCheckerAny, AnyVectorLengthYieldsInt) {
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<InjectExpr>(
+        std::make_unique<IntExpr>(1), int_type()));
+    auto vec = std::make_unique<VectorExpr>(std::move(elems));
+    auto inj = std::make_unique<InjectExpr>(std::move(vec),
+                                             vector_type({any_type()}));
+    Program p(std::make_unique<AnyVectorLengthExpr>(std::move(inj)));
+    EXPECT_EQ(*type_check(p), *int_type());
+}
+
+TEST(TypeCheckerAny, AnyVectorRefYieldsAnyAndNeedsAnIntIndex) {
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<InjectExpr>(
+        std::make_unique<IntExpr>(1), int_type()));
+    auto vec = std::make_unique<VectorExpr>(std::move(elems));
+    auto inj = std::make_unique<InjectExpr>(std::move(vec),
+                                             vector_type({any_type()}));
+    Program ok(std::make_unique<AnyVectorRefExpr>(
+        std::move(inj), std::make_unique<IntExpr>(0)));
+    EXPECT_EQ(*type_check(ok), *any_type());
+}
+
+TEST(TypeCheckerAny, AnyVectorRefRejectsANonAnyTuple) {
+    std::vector<std::unique_ptr<Expr>> elems;
+    elems.push_back(std::make_unique<IntExpr>(1));
+    Program bad(std::make_unique<AnyVectorRefExpr>(
+        std::make_unique<VectorExpr>(std::move(elems)),
+        std::make_unique<IntExpr>(0)));
+    EXPECT_THROW(type_check(bad), TypeError);
+}
+
+TEST(TypeCheckerAny, MakeAnyAndValueOfRoundTrip) {
+    auto ma = std::make_unique<MakeAnyExpr>(std::make_unique<IntExpr>(1),
+                                             kTagInt);
+    Program p(std::make_unique<ValueOfExpr>(std::move(ma), int_type()));
+    EXPECT_EQ(*type_check(p), *int_type());
+}
+
+TEST(TypeCheckerAny, TagOfAnyYieldsInt) {
+    auto ma = std::make_unique<MakeAnyExpr>(std::make_unique<IntExpr>(1),
+                                             kTagInt);
+    Program p(std::make_unique<TagOfAnyExpr>(std::move(ma)));
+    EXPECT_EQ(*type_check(p), *int_type());
+}
+
+TEST(TypeCheckerAny, ExitUnifiesWithTheOtherIfBranch) {
+    auto p = std::make_unique<IfExpr>(std::make_unique<BoolExpr>(true),
+                                       std::make_unique<IntExpr>(1),
+                                       std::make_unique<ExitExpr>());
+    Program prog(std::move(p));
+    EXPECT_EQ(*type_check(prog), *int_type());
+}

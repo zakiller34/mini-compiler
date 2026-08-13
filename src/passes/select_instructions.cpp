@@ -30,7 +30,87 @@ x86::CC cmp_to_cc(cir::CCmpOp op) {
     return x86::CC::E;
 }
 
+/// Mask that clears the 3 tag bits of a tagged pointer (…11111000)
+constexpr int64_t kUntagPtrMask = -8;
+/// Exit status for a trapped runtime type error (Siek 2023, section 1.5)
+constexpr int64_t kTrappedErrorStatus = 255;
+/// Mask isolating the length field of a heap tag (bits 1-6)
+constexpr int64_t kLengthMask = 0x7E;
+
+/// @brief Emit the C_Any tag operations (Siek 2023, section 9.8)
+/// @requires dst is a var/register that may be clobbered
+/// @ensures returns false if expr is not a C_Any expression
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
+bool emit_any_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
+                    std::vector<x86::Instr> &instrs) {
+    x86::Arg r11 = x86::RegArg{x86::Reg::R11};
+    x86::Arg rax = x86::RegArg{x86::Reg::Rax};
+    if (const auto *ma = std::get_if<cir::CMakeAnyExpr>(&expr)) {
+        // Pointers are already 8-byte aligned, so only scalars shift left
+        instrs.push_back(x86::Movq{atom_to_arg(ma->value), dst});
+        if (ma->tag == kTagInt || ma->tag == kTagBool || ma->tag == kTagVoid) {
+            instrs.push_back(x86::Salq{x86::Imm{kTagShift}, dst});
+        }
+        instrs.push_back(x86::Orq{x86::Imm{ma->tag}, dst});
+        return true;
+    }
+    if (const auto *ta = std::get_if<cir::CTagOfAnyExpr>(&expr)) {
+        instrs.push_back(x86::Movq{atom_to_arg(ta->value), dst});
+        instrs.push_back(x86::Andq{x86::Imm{kTagMask}, dst});
+        return true;
+    }
+    if (const auto *vo = std::get_if<cir::CValueOfExpr>(&expr)) {
+        if (is_root_type(vo->ftype) || is_fun_type(vo->ftype)) {
+            instrs.push_back(x86::Movq{x86::Imm{kUntagPtrMask}, dst});
+            instrs.push_back(x86::Andq{atom_to_arg(vo->value), dst});
+        } else {
+            instrs.push_back(x86::Movq{atom_to_arg(vo->value), dst});
+            instrs.push_back(x86::Sarq{x86::Imm{kTagShift}, dst});
+        }
+        return true;
+    }
+    if (const auto *al = std::get_if<cir::CAnyVectorLengthExpr>(&expr)) {
+        instrs.push_back(x86::Movq{x86::Imm{kUntagPtrMask}, r11});
+        instrs.push_back(x86::Andq{atom_to_arg(al->vec), r11});
+        instrs.push_back(x86::Movq{x86::Deref{x86::Reg::R11, 0}, r11});
+        instrs.push_back(x86::Andq{x86::Imm{kLengthMask}, r11});
+        instrs.push_back(x86::Sarq{x86::Imm{1}, r11});
+        instrs.push_back(x86::Movq{r11, dst});
+        return true;
+    }
+    if (const auto *ar = std::get_if<cir::CAnyVectorRefExpr>(&expr)) {
+        // %r11 = untagged base + 8*(idx+1); the index is only known at runtime
+        instrs.push_back(x86::Movq{x86::Imm{kUntagPtrMask}, r11});
+        instrs.push_back(x86::Andq{atom_to_arg(ar->vec), r11});
+        instrs.push_back(x86::Movq{atom_to_arg(ar->idx), rax});
+        instrs.push_back(x86::Addq{x86::Imm{1}, rax});
+        instrs.push_back(x86::Imulq{x86::Imm{kWordSize}, rax});
+        instrs.push_back(x86::Addq{rax, r11});
+        instrs.push_back(x86::Movq{x86::Deref{x86::Reg::R11, 0}, dst});
+        return true;
+    }
+    if (const auto *as = std::get_if<cir::CAnyVectorSetExpr>(&expr)) {
+        instrs.push_back(x86::Movq{x86::Imm{kUntagPtrMask}, r11});
+        instrs.push_back(x86::Andq{atom_to_arg(as->vec), r11});
+        instrs.push_back(x86::Movq{atom_to_arg(as->idx), rax});
+        instrs.push_back(x86::Addq{x86::Imm{1}, rax});
+        instrs.push_back(x86::Imulq{x86::Imm{kWordSize}, rax});
+        instrs.push_back(x86::Addq{rax, r11});
+        instrs.push_back(x86::Movq{atom_to_arg(as->val),
+                                    x86::Deref{x86::Reg::R11, 0}});
+        // any-vector-set! returns void
+        instrs.push_back(x86::Movq{x86::Imm{0}, dst});
+        return true;
+    }
+    return false;
+}
+
 /// @brief Emit instructions for CExpr, storing result in dst
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
                 std::vector<x86::Instr> &instrs) {
     if (const auto *ae = std::get_if<cir::AtomExpr>(&expr)) {
@@ -68,10 +148,10 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         int64_t bytes = kWordSize * (n + 1);
         // Compute GC tag: bit0=0, bits1-6=length, bits7+=pointer mask
         int64_t tag = (n & 0x3F) << 1; // length in bits 1-6
-        // Set pointer mask bits 7+ for vector-typed elements
+        // Set pointer mask bits 7+ for vector- or Any-typed elements
         for (int64_t i = 0; i < n; ++i) {
             if (i < static_cast<int64_t>(ae->type->elem_types.size()) &&
-                is_vector_type(ae->type->elem_types[static_cast<size_t>(i)])) {
+                is_root_type(ae->type->elem_types[static_cast<size_t>(i)])) {
                 tag |= (1LL << (7 + i));
             }
         }
@@ -135,7 +215,7 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         // invariant: tag has pointer-mask bits for slots[0..i)
         for (int64_t i = 0; i < n; ++i) {
             if (i < static_cast<int64_t>(ac->type->elem_types.size()) &&
-                is_vector_type(ac->type->elem_types[static_cast<size_t>(i)])) {
+                is_root_type(ac->type->elem_types[static_cast<size_t>(i)])) {
                 tag |= (1LL << (7 + i));
             }
         }
@@ -151,6 +231,8 @@ void emit_cexpr(const cir::CExpr &expr, const x86::Arg &dst,
         instrs.push_back(x86::Movq{x86::Deref{x86::Reg::R11, 0}, dst});
         instrs.push_back(x86::Sarq{x86::Imm{57}, dst});
         instrs.push_back(x86::Andq{x86::Imm{0x1F}, dst});
+    } else {
+        emit_any_cexpr(expr, dst, instrs);
     }
 }
 
@@ -177,6 +259,11 @@ void emit_tail(const cir::Tail &tail, std::vector<x86::Instr> &instrs) {
         }
         instrs.push_back(x86::TailJmp{atom_to_arg(tc->func),
             static_cast<int64_t>(tc->args.size())});
+    } else if (std::holds_alternative<cir::Exit>(tail)) {
+        // trapped-error: halt with status 255 and never return
+        instrs.push_back(x86::Movq{x86::Imm{kTrappedErrorStatus},
+                                     x86::RegArg{x86::Reg::Rdi}});
+        instrs.push_back(x86::Callq{"trapped_error", 1});
     }
 }
 
@@ -217,6 +304,9 @@ static bool has_gc_ops(const cir::CProgram &prog) {
     return false;
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 x86::X86Program select_instructions(const cir::CProgram &prog) {
     x86::X86Program result;
     result.var_types = prog.var_types;

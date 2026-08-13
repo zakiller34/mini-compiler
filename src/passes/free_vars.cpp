@@ -7,6 +7,9 @@ namespace mc {
 /// @brief Append all direct Expr children of e onto work.
 /// @requires e != nullptr
 /// @modifies work
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_child_exprs(const Expr *e, std::vector<const Expr *> &work) {
     switch (e->kind()) {
     case NodeKind::Unary:
@@ -80,12 +83,49 @@ void push_child_exprs(const Expr *e, std::vector<const Expr *> &work) {
         for (const auto &el : c->elems) work.push_back(el.get());
         break;
     }
+    case NodeKind::Inject:
+        work.push_back(expr_cast<InjectExpr>(e)->expr.get());
+        break;
+    case NodeKind::Project:
+        work.push_back(expr_cast<ProjectExpr>(e)->expr.get());
+        break;
+    case NodeKind::TypePredicate:
+        work.push_back(expr_cast<TypePredExpr>(e)->expr.get());
+        break;
+    case NodeKind::MakeAny:
+        work.push_back(expr_cast<MakeAnyExpr>(e)->expr.get());
+        break;
+    case NodeKind::TagOfAny:
+        work.push_back(expr_cast<TagOfAnyExpr>(e)->expr.get());
+        break;
+    case NodeKind::ValueOf:
+        work.push_back(expr_cast<ValueOfExpr>(e)->expr.get());
+        break;
+    case NodeKind::AnyVectorRef: {
+        auto *a = expr_cast<AnyVectorRefExpr>(e);
+        work.push_back(a->vec.get());
+        work.push_back(a->idx.get());
+        break;
+    }
+    case NodeKind::AnyVectorSet: {
+        auto *a = expr_cast<AnyVectorSetExpr>(e);
+        work.push_back(a->vec.get());
+        work.push_back(a->idx.get());
+        work.push_back(a->val.get());
+        break;
+    }
+    case NodeKind::AnyVectorLength:
+        work.push_back(expr_cast<AnyVectorLengthExpr>(e)->vec.get());
+        break;
     default:
-        break; // leaves: Int, Bool, Var, Read, Void, Get, Allocate, ...
+        break; // leaves: Int, Bool, Var, Read, Void, Get, Exit, Allocate, ...
     }
 }
 
 /// @brief Collect used names and binder names, then difference.
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::set<std::string> free_vars(const Expr *e) {
     std::set<std::string> used;
     std::set<std::string> bound;

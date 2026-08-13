@@ -34,11 +34,17 @@ struct IfCondFrame {
 };
 
 struct IfThenFrame {
+    const Expr *then_branch;
     const Expr *else_branch;
     TypeEnv env;
 };
 
-struct IfElseFrame {};
+/// `then_br`/`else_br` are kept so a branch that is `Exit` (which never
+/// returns) can be excluded from the same-type check.
+struct IfElseFrame {
+    const Expr *then_br;
+    const Expr *else_br;
+};
 
 struct LetBindFrame {
     std::string var;
@@ -86,6 +92,21 @@ struct LambdaBodyFrame {
 };
 struct ProcArityFrame {};
 
+// -- L_Any frames (Siek 2023, figure 9.6) --
+
+struct InjectFrame { TypePtr ftype; };
+struct ProjectFrame { TypePtr ftype; };
+struct TypePredFrame {};
+struct AnyRefVecFrame { const Expr *idx; TypeEnv env; };
+struct AnyRefIdxFrame {};
+struct AnySetVecFrame { const Expr *idx; const Expr *val; TypeEnv env; };
+struct AnySetIdxFrame { const Expr *val; TypeEnv env; };
+struct AnySetValFrame {};
+struct AnyLengthFrame {};
+struct MakeAnyFrame {};
+struct TagOfAnyFrame {};
+struct ValueOfFrame { TypePtr ftype; };
+
 using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            IfCondFrame, IfThenFrame, IfElseFrame,
                            LetBindFrame, LetBodyFrame,
@@ -94,9 +115,83 @@ using Frame = std::variant<EvalFrame, UnaryFrame, BinLhsFrame, BinRhsFrame,
                            VectorBuildFrame, VectorRefFrame,
                            VectorSetVecFrame, VectorSetValFrame,
                            VectorLengthFrame, ApplyBuildFrame,
-                           LambdaBodyFrame, ProcArityFrame>;
+                           LambdaBodyFrame, ProcArityFrame,
+                           InjectFrame, ProjectFrame, TypePredFrame,
+                           AnyRefVecFrame, AnyRefIdxFrame,
+                           AnySetVecFrame, AnySetIdxFrame, AnySetValFrame,
+                           AnyLengthFrame, MakeAnyFrame, TagOfAnyFrame,
+                           ValueOfFrame>;
+
+/// @brief Push eval frames for the L_Any node kinds (enum-switch FSM)
+/// @requires e != nullptr
+/// @ensures returns false if e is not an L_Any node
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
+bool push_eval_any(const Expr *e, const TypeEnv &env,
+                   std::vector<Frame> &stack) {
+    switch (e->kind()) {
+    case NodeKind::Inject: {
+        const auto *ie = expr_cast<InjectExpr>(e);
+        stack.push_back(InjectFrame{ie->ftype});
+        stack.push_back(EvalFrame{ie->expr.get(), env});
+        return true;
+    }
+    case NodeKind::Project: {
+        const auto *pe = expr_cast<ProjectExpr>(e);
+        stack.push_back(ProjectFrame{pe->ftype});
+        stack.push_back(EvalFrame{pe->expr.get(), env});
+        return true;
+    }
+    case NodeKind::TypePredicate: {
+        const auto *tp = expr_cast<TypePredExpr>(e);
+        stack.push_back(TypePredFrame{});
+        stack.push_back(EvalFrame{tp->expr.get(), env});
+        return true;
+    }
+    case NodeKind::AnyVectorRef: {
+        const auto *ar = expr_cast<AnyVectorRefExpr>(e);
+        stack.push_back(AnyRefVecFrame{ar->idx.get(), env});
+        stack.push_back(EvalFrame{ar->vec.get(), env});
+        return true;
+    }
+    case NodeKind::AnyVectorSet: {
+        const auto *as = expr_cast<AnyVectorSetExpr>(e);
+        stack.push_back(AnySetVecFrame{as->idx.get(), as->val.get(), env});
+        stack.push_back(EvalFrame{as->vec.get(), env});
+        return true;
+    }
+    case NodeKind::AnyVectorLength: {
+        const auto *al = expr_cast<AnyVectorLengthExpr>(e);
+        stack.push_back(AnyLengthFrame{});
+        stack.push_back(EvalFrame{al->vec.get(), env});
+        return true;
+    }
+    case NodeKind::MakeAny: {
+        const auto *ma = expr_cast<MakeAnyExpr>(e);
+        stack.push_back(MakeAnyFrame{});
+        stack.push_back(EvalFrame{ma->expr.get(), env});
+        return true;
+    }
+    case NodeKind::TagOfAny: {
+        const auto *ta = expr_cast<TagOfAnyExpr>(e);
+        stack.push_back(TagOfAnyFrame{});
+        stack.push_back(EvalFrame{ta->expr.get(), env});
+        return true;
+    }
+    case NodeKind::ValueOf: {
+        const auto *vo = expr_cast<ValueOfExpr>(e);
+        stack.push_back(ValueOfFrame{vo->ftype});
+        stack.push_back(EvalFrame{vo->expr.get(), env});
+        return true;
+    }
+    default:
+        return false;
+    }
+}
 
 /// @brief Push eval for type checking
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
                std::vector<TypePtr> &types) {
     const Expr *e = ef.expr;
@@ -272,12 +367,148 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{pa->expr.get(), env});
         break;
     }
+    case NodeKind::Exit:
+        // Exit halts, so its type is never observed; IfElseFrame skips the
+        // same-type check whenever a branch is Exit.
+        types.push_back(void_type());
+        break;
     default:
-        throw TypeError("type_check: unexpected node kind");
+        if (!push_eval_any(e, env, stack)) {
+            throw TypeError("type_check: unexpected node kind");
+        }
+        break;
     }
 }
 
+/// @brief Continuations for Inject/Project/type predicates
+/// @ensures returns false if frame is not one of these
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
+bool cont_cast(Frame &frame, std::vector<TypePtr> &types) {
+    if (auto *inf = std::get_if<InjectFrame>(&frame)) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_flat_type(inf->ftype)) {
+            throw TypeError("inject: not a flat type: " + inf->ftype->dump());
+        }
+        if (*t != *inf->ftype) {
+            throw TypeError("inject: operand is " + t->dump() + ", expected " +
+                            inf->ftype->dump());
+        }
+        types.push_back(any_type());
+        return true;
+    }
+    if (auto *pf = std::get_if<ProjectFrame>(&frame)) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_flat_type(pf->ftype)) {
+            throw TypeError("project: not a flat type: " + pf->ftype->dump());
+        }
+        if (!is_any_type(t)) {
+            throw TypeError("project: operand must be Any, got " + t->dump());
+        }
+        types.push_back(pf->ftype);
+        return true;
+    }
+    if (std::get_if<TypePredFrame>(&frame) != nullptr) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_any_type(t)) {
+            throw TypeError("type predicate requires Any, got " + t->dump());
+        }
+        types.push_back(bool_type());
+        return true;
+    }
+    return false;
+}
+
+/// @brief Continuations for the any-vector-* operations
+/// @ensures returns false if frame is not one of these
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
+bool cont_any_vector(Frame &frame, std::vector<Frame> &stack,
+                     std::vector<TypePtr> &types) {
+    if (auto *rv = std::get_if<AnyRefVecFrame>(&frame)) {
+        TypePtr vec_t = types.back(); types.pop_back();
+        if (!is_any_type(vec_t)) {
+            throw TypeError("any-vector-ref requires Any tuple");
+        }
+        stack.push_back(AnyRefIdxFrame{});
+        stack.push_back(EvalFrame{rv->idx, rv->env});
+        return true;
+    }
+    if (std::get_if<AnyRefIdxFrame>(&frame) != nullptr) {
+        TypePtr idx_t = types.back(); types.pop_back();
+        if (*idx_t != *int_type()) {
+            throw TypeError("any-vector-ref index must be Int");
+        }
+        types.push_back(any_type());
+        return true;
+    }
+    if (auto *sv = std::get_if<AnySetVecFrame>(&frame)) {
+        TypePtr vec_t = types.back(); types.pop_back();
+        if (!is_any_type(vec_t)) {
+            throw TypeError("any-vector-set! requires Any tuple");
+        }
+        stack.push_back(AnySetIdxFrame{sv->val, sv->env});
+        stack.push_back(EvalFrame{sv->idx, sv->env});
+        return true;
+    }
+    if (auto *si = std::get_if<AnySetIdxFrame>(&frame)) {
+        TypePtr idx_t = types.back(); types.pop_back();
+        if (*idx_t != *int_type()) {
+            throw TypeError("any-vector-set! index must be Int");
+        }
+        stack.push_back(AnySetValFrame{});
+        stack.push_back(EvalFrame{si->val, si->env});
+        return true;
+    }
+    if (std::get_if<AnySetValFrame>(&frame) != nullptr) {
+        TypePtr val_t = types.back(); types.pop_back();
+        if (!is_any_type(val_t)) {
+            throw TypeError("any-vector-set! value must be Any");
+        }
+        types.push_back(void_type());
+        return true;
+    }
+    if (std::get_if<AnyLengthFrame>(&frame) != nullptr) {
+        TypePtr vec_t = types.back(); types.pop_back();
+        if (!is_any_type(vec_t)) {
+            throw TypeError("any-vector-length requires Any");
+        }
+        types.push_back(int_type());
+        return true;
+    }
+    return false;
+}
+
+/// @brief Continuations for the post-reveal_casts nodes
+/// @ensures returns false if frame is not one of these
+bool cont_revealed(Frame &frame, std::vector<TypePtr> &types) {
+    if (std::get_if<MakeAnyFrame>(&frame) != nullptr) {
+        types.pop_back();
+        types.push_back(any_type());
+        return true;
+    }
+    if (std::get_if<TagOfAnyFrame>(&frame) != nullptr) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_any_type(t)) {
+            throw TypeError("tag-of-any requires Any, got " + t->dump());
+        }
+        types.push_back(int_type());
+        return true;
+    }
+    if (auto *vf = std::get_if<ValueOfFrame>(&frame)) {
+        TypePtr t = types.back(); types.pop_back();
+        if (!is_any_type(t)) {
+            throw TypeError("value-of requires Any, got " + t->dump());
+        }
+        types.push_back(vf->ftype);
+        return true;
+    }
+    return false;
+}
+
 /// @brief Process continuation for type checking
+// Enum-switch FSM / frame dispatcher: exempt from the 30-line rule
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<TypePtr> &types) {
     if (auto *uf = std::get_if<UnaryFrame>(&frame)) {
@@ -322,17 +553,25 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         TypePtr cond_t = types.back(); types.pop_back();
         if (*cond_t != *bool_type())
             throw TypeError("if condition must be Bool");
-        stack.push_back(IfThenFrame{ic->else_branch, ic->env});
+        stack.push_back(IfThenFrame{ic->then_branch, ic->else_branch,
+                                     ic->env});
         stack.push_back(EvalFrame{ic->then_branch, ic->env});
     } else if (auto *it = std::get_if<IfThenFrame>(&frame)) {
-        stack.push_back(IfElseFrame{});
+        stack.push_back(IfElseFrame{it->then_branch, it->else_branch});
         stack.push_back(EvalFrame{it->else_branch, it->env});
-    } else if (std::get_if<IfElseFrame>(&frame) != nullptr) {
+    } else if (auto *ie = std::get_if<IfElseFrame>(&frame)) {
         TypePtr else_t = types.back(); types.pop_back();
         TypePtr then_t = types.back(); types.pop_back();
-        if (*then_t != *else_t)
+        // Exit never returns, so it unifies with the other branch
+        if (ie->else_br->kind() == NodeKind::Exit) {
+            types.push_back(then_t);
+        } else if (ie->then_br->kind() == NodeKind::Exit) {
+            types.push_back(else_t);
+        } else if (*then_t != *else_t) {
             throw TypeError("if branches must have same type");
-        types.push_back(then_t);
+        } else {
+            types.push_back(then_t);
+        }
     } else if (auto *lb = std::get_if<LetBindFrame>(&frame)) {
         TypePtr init_t = types.back(); types.pop_back();
         TypeEnv new_env = lb->env;
@@ -462,6 +701,10 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             throw TypeError("procedure_arity requires a function");
         }
         types.push_back(int_type());
+    } else if (!cont_cast(frame, types) &&
+               !cont_any_vector(frame, stack, types) &&
+               !cont_revealed(frame, types)) {
+        throw TypeError("type_check: unexpected continuation frame");
     }
 }
 

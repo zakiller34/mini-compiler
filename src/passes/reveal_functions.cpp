@@ -1,5 +1,6 @@
 #include "reveal_functions.h"
 
+#include "any_rebuild.h"
 #include "clone_leaf.h"
 
 #include <algorithm>
@@ -49,9 +50,13 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild, ApplyBuild,
-                           LambdaBuild, ProcArityBuild>;
+                           LambdaBuild, ProcArityBuild,
+                           AnyBuildFrame>;
 
 /// @brief Evaluate leaf or push continuation frames
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, const FunMap &funs,
                std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
@@ -60,6 +65,7 @@ void push_eval(const EvalFrame &ef, const FunMap &funs,
         results.push_back(std::move(*leaf));
         return;
     }
+    if (push_any_eval<EvalFrame>(e, stack)) return;
     switch (e->kind()) {
     case NodeKind::Var: {
         auto *ve = expr_cast<VarExpr>(e);
@@ -201,9 +207,14 @@ void push_eval(const EvalFrame &ef, const FunMap &funs,
 }
 
 /// @brief Process continuation frame
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+    if (auto *anyb = std::get_if<AnyBuildFrame>(&frame)) {
+        build_any(*anyb, results);
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<UnaryExpr>(
             ub->op, std::move(operand)));

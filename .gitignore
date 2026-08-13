@@ -32,3 +32,4 @@ lean/build/
 
 # Zone.Identifier (WSL artifact)
 *:Zone.Identifier
+.cache/

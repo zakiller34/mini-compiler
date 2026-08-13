@@ -29,6 +29,8 @@ add_library(mc_lib STATIC
     passes/free_vars.cpp
     passes/convert_assignments.cpp
     passes/convert_to_closures.cpp
+    passes/cast_insert.cpp
+    passes/reveal_casts.cpp
 )
 
 target_include_directories(mc_lib PUBLIC

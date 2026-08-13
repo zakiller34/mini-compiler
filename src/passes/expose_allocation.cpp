@@ -1,9 +1,11 @@
 #include "expose_allocation.h"
 
+#include "any_rebuild.h"
 #include "clone_leaf.h"
 
 #include <algorithm>
 #include <cassert>
+#include <map>
 #include <string>
 #include <variant>
 #include <vector>
@@ -52,27 +54,64 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild, ApplyBuild,
-                           ClosureBuild, ProcArityBuild>;
+                           ClosureBuild, ProcArityBuild,
+                           AnyBuildFrame>;
+
+/// Types of the variables in scope. Names are unique after uniquify, so a
+/// single flat map needs no scoping.
+using TypeEnv = std::map<std::string, TypePtr>;
+
+/// @brief Infer the type of one already-lowered tuple element
+/// @requires e != nullptr
+/// @ensures the result distinguishes pointer-shaped slots (Vector, Any) from
+///          scalar ones, which is what the GC pointer mask depends on
+// Dispatch over a closed node set: exempt from the 30-line rule (CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
+TypePtr infer_elem_type(const Expr *e, const TypeEnv &env) {
+    switch (e->kind()) {
+    case NodeKind::Int: case NodeKind::Read:
+    case NodeKind::TagOfAny: case NodeKind::AnyVectorLength:
+    case NodeKind::VectorLength: case NodeKind::ProcArity:
+        return int_type();
+    case NodeKind::Bool: case NodeKind::TypePredicate:
+        return bool_type();
+    case NodeKind::Void: case NodeKind::Collect:
+        return void_type();
+    case NodeKind::Allocate:
+        return expr_cast<AllocateExpr>(e)->type;
+    case NodeKind::AllocateClosure:
+        return expr_cast<AllocateClosureExpr>(e)->type;
+    case NodeKind::MakeAny: case NodeKind::Inject:
+    case NodeKind::AnyVectorRef:
+        return any_type();
+    case NodeKind::ValueOf:
+        return expr_cast<ValueOfExpr>(e)->ftype;
+    case NodeKind::Project:
+        return expr_cast<ProjectExpr>(e)->ftype;
+    case NodeKind::Var: {
+        auto it = env.find(expr_cast<VarExpr>(e)->name);
+        return it == env.end() ? nullptr : it->second;
+    }
+    case NodeKind::Get: {
+        auto it = env.find(expr_cast<GetExpr>(e)->name);
+        return it == env.end() ? nullptr : it->second;
+    }
+    default:
+        return nullptr;
+    }
+}
 
 /// @brief Infer the type of a vector literal for Allocate node
 /// @requires elems non-empty; elements already expose-allocated
-TypePtr infer_vector_type(const std::vector<std::unique_ptr<Expr>> &elems) {
+/// @ensures an element whose type cannot be inferred is conservatively Any,
+///          which marks it as a possible GC root
+TypePtr infer_vector_type(const std::vector<std::unique_ptr<Expr>> &elems,
+                          const TypeEnv &env) {
     std::vector<TypePtr> ts;
     // invariant: ts has inferred types for elems[0..i)
     for (const auto &elem : elems) {
-        const Expr *e = elem.get();
-        switch (e->kind()) {
-        case NodeKind::Int: ts.push_back(int_type()); break;
-        case NodeKind::Bool: ts.push_back(bool_type()); break;
-        case NodeKind::Void: ts.push_back(void_type()); break;
-        case NodeKind::Allocate:
-            ts.push_back(expr_cast<AllocateExpr>(e)->type);
-            break;
-        default:
-            assert(false && "infer_vector_type: unexpected expr kind in vector element");
-            ts.push_back(int_type());
-            break;
-        }
+        auto t = infer_elem_type(elem.get(), env);
+        ts.push_back(t ? t : any_type());
     }
     return vector_type(std::move(ts));
 }
@@ -131,14 +170,18 @@ std::unique_ptr<Expr> lower_allocation(
     return inner;
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
-               std::vector<std::unique_ptr<Expr>> &results) {
+               std::vector<std::unique_ptr<Expr>> &results, TypeEnv &env) {
     const Expr *e = ef.expr;
 
     if (auto leaf = clone_leaf(e)) {
         results.push_back(std::move(*leaf));
         return;
     }
+    if (push_any_eval<EvalFrame>(e, stack)) return;
     switch (e->kind()) {
     case NodeKind::Var:
         results.push_back(std::make_unique<VarExpr>(
@@ -285,10 +328,15 @@ void push_eval(const EvalFrame &ef, std::vector<Frame> &stack,
     }
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results,
-                  int &tmp_counter) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+                  int &tmp_counter, TypeEnv &env) {
+    if (auto *anyb = std::get_if<AnyBuildFrame>(&frame)) {
+        build_any(*anyb, results);
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         results.push_back(std::make_unique<UnaryExpr>(
             ub->op, std::move(operand)));
@@ -313,11 +361,16 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
         results.push_back(std::make_unique<IfExpr>(
             std::move(cond_e), std::move(then_e), std::move(else_e)));
     } else if (auto *li = std::get_if<LetBuildInit>(&frame)) {
+        // The init is already lowered, so its type is known before the body
+        if (auto t = infer_elem_type(results.back().get(), env)) {
+            env[li->var] = t;
+        }
         stack.push_back(LetBuildBody{li->var});
         stack.push_back(EvalFrame{li->body});
     } else if (auto *lb = std::get_if<LetBuildBody>(&frame)) {
         auto body = std::move(results.back()); results.pop_back();
         auto init = std::move(results.back()); results.pop_back();
+        if (auto t = infer_elem_type(init.get(), env)) env[lb->var] = t;
         results.push_back(std::make_unique<LetExpr>(
             lb->var, std::move(init), std::move(body)));
     } else if (auto *wc = std::get_if<WhileBuildCond>(&frame)) {
@@ -357,7 +410,7 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
             results.pop_back();
         }
         std::reverse(elem_exprs.begin(), elem_exprs.end());
-        TypePtr vtype = infer_vector_type(elem_exprs);
+        TypePtr vtype = infer_vector_type(elem_exprs, env);
         int64_t n = static_cast<int64_t>(vb->total);
         auto alloc = std::make_unique<AllocateExpr>(n, vtype);
         results.push_back(lower_allocation(std::move(elem_exprs),
@@ -417,7 +470,8 @@ void process_cont(Frame &frame, std::vector<Frame> &stack,
 
 /// @brief Process a single expression through expose_allocation
 /// @requires root != nullptr
-std::unique_ptr<Expr> expose_alloc_expr(const Expr *root, int &tmp_counter) {
+std::unique_ptr<Expr> expose_alloc_expr(const Expr *root, int &tmp_counter,
+                                        TypeEnv env) {
     std::vector<Frame> stack;
     std::vector<std::unique_ptr<Expr>> results;
     stack.push_back(EvalFrame{root});
@@ -427,9 +481,9 @@ std::unique_ptr<Expr> expose_alloc_expr(const Expr *root, int &tmp_counter) {
         auto frame = std::move(stack.back());
         stack.pop_back();
         if (auto *ef = std::get_if<EvalFrame>(&frame)) {
-            push_eval(*ef, stack, results);
+            push_eval(*ef, stack, results, env);
         } else {
-            process_cont(frame, stack, results, tmp_counter);
+            process_cont(frame, stack, results, tmp_counter, env);
         }
     }
     return std::move(results.back());
@@ -439,14 +493,26 @@ std::unique_ptr<Expr> expose_alloc_expr(const Expr *root, int &tmp_counter) {
 
 std::unique_ptr<Program> expose_allocation(const Program &prog) {
     int tmp_counter = 0;
+    // Seed the environment with the declared types of every function
+    TypeEnv globals;
+    // invariant: globals has fun types for defs[0..i)
+    for (const auto &def : prog.defs) {
+        std::vector<TypePtr> params;
+        for (const auto &p : def.params) params.push_back(p.second);
+        globals[def.name] = fun_type(std::move(params), def.ret_type);
+    }
+
     std::vector<DefNode> new_defs;
     // invariant: new_defs[0..i) processed
     for (const auto &def : prog.defs) {
-        auto new_body = expose_alloc_expr(def.body.get(), tmp_counter);
+        TypeEnv env = globals;
+        // invariant: env has params[0..j) of this def
+        for (const auto &p : def.params) env[p.first] = p.second;
+        auto new_body = expose_alloc_expr(def.body.get(), tmp_counter, env);
         new_defs.push_back(DefNode{def.name, def.params, def.ret_type,
                                     std::move(new_body)});
     }
-    auto new_body = expose_alloc_expr(prog.body.get(), tmp_counter);
+    auto new_body = expose_alloc_expr(prog.body.get(), tmp_counter, globals);
     return std::make_unique<Program>(std::move(new_defs), std::move(new_body));
 }
 

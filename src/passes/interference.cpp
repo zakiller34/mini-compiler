@@ -1,5 +1,7 @@
 #include "interference.h"
 
+#include "graph_coloring.h"
+
 namespace mc {
 
 namespace {
@@ -50,8 +52,12 @@ const std::vector<x86::Reg> &caller_saved_regs() {
 /// @ensures edge(u,v) iff simultaneously live at some point
 /// @ensures movq src,dst: no interference edge between src,dst; move_edge added
 /// @ensures callq: edges between all live vars and caller-saved regs
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 Graph build_interference(const std::vector<x86::Instr> &instrs,
-                         const std::vector<std::set<std::string>> &live_after) {
+                         const std::vector<std::set<std::string>> &live_after,
+                         const std::map<std::string, TypePtr> *var_types) {
     Graph graph;
 
     // Add all vars as nodes
@@ -108,6 +114,16 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                 for (auto reg : caller_saved_regs()) {
                     graph.add_edge(v_loc, Location{reg});
                 }
+                // A live Any may hold a pointer the collector must see, so it
+                // has to be spilled to the root stack rather than kept in a
+                // register across the call (Siek 2023, section 9.9).
+                if (var_types == nullptr) continue;
+                auto it = var_types->find(v);
+                if (it != var_types->end() && is_any_type(it->second)) {
+                    for (auto reg : allocable_regs()) {
+                        graph.add_edge(v_loc, Location{reg});
+                    }
+                }
             }
         } else {
             // General case: extract written VarArg dst, add edges to live
@@ -126,6 +142,12 @@ Graph build_interference(const std::vector<x86::Instr> &instrs,
                 dst_arg = &sq->dst;
             } else if (const auto *lq = std::get_if<x86::Leaq>(&instr)) {
                 dst_arg = &lq->dst;
+            } else if (const auto *oq = std::get_if<x86::Orq>(&instr)) {
+                dst_arg = &oq->dst;
+            } else if (const auto *slq = std::get_if<x86::Salq>(&instr)) {
+                dst_arg = &slq->dst;
+            } else if (const auto *im = std::get_if<x86::Imulq>(&instr)) {
+                dst_arg = &im->dst;
             } else if (const auto *sc = std::get_if<x86::SetCC>(&instr)) {
                 dst_arg = &sc->dst;
             } else if (const auto *mz = std::get_if<x86::Movzbq>(&instr)) {

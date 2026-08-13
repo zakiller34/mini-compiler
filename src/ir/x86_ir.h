@@ -47,10 +47,15 @@ struct Sarq { Arg src; Arg dst; };
 struct Leaq { Arg src; Arg dst; };
 struct IndirectCallq { Arg func; int64_t arity; };
 struct TailJmp { Arg func; int64_t arity; };
+struct Orq { Arg src; Arg dst; };
+struct Salq { Arg src; Arg dst; };
+/// Two-operand signed multiply; dst must be a register
+struct Imulq { Arg src; Arg dst; };
 
 using Instr = std::variant<Addq, Subq, Movq, Negq, Xorq, Cmpq, SetCC,
                            Movzbq, Pushq, Popq, Callq, Retq, Jmp, JmpIf,
-                           Andq, Sarq, Leaq, IndirectCallq, TailJmp>;
+                           Andq, Sarq, Leaq, IndirectCallq, TailJmp,
+                           Orq, Salq, Imulq>;
 
 struct Block { std::vector<Instr> instrs; };
 

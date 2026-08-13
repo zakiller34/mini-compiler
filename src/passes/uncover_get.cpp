@@ -1,5 +1,6 @@
 #include "uncover_get.h"
 
+#include "any_rebuild.h"
 #include "clone_leaf.h"
 
 #include <algorithm>
@@ -15,6 +16,9 @@ namespace {
 
 /// Phase 1: collect all mutable vars (targets of set!)
 /// @ensures result contains all var names appearing as SetBangExpr targets
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::set<std::string> collect_mutable_vars(const Expr *root) {
     std::set<std::string> result;
     std::vector<const Expr *> worklist;
@@ -141,11 +145,15 @@ using Frame = std::variant<EvalFrame, UnaryBuild, BinBuildLhs, BinBuildRhs,
                            VectorBuild, VectorRefBuild,
                            VectorSetVecBuild, VectorSetValBuild,
                            VectorLengthBuild, ApplyBuild,
-                           ClosureBuild, ProcArityBuild>;
+                           ClosureBuild, ProcArityBuild,
+                           AnyBuildFrame>;
 
 /// @brief Evaluate leaf or push continuation frames for uncover_get
 /// @requires ef.expr != nullptr
 /// @modifies stack, results
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
                std::vector<Frame> &stack,
                std::vector<std::unique_ptr<Expr>> &results) {
@@ -154,6 +162,7 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
         results.push_back(std::move(*leaf));
         return;
     }
+    if (push_any_eval<EvalFrame>(e, stack)) return;
     switch (e->kind()) {
     case NodeKind::Var: {
         auto *ve = expr_cast<VarExpr>(e);
@@ -314,9 +323,14 @@ void push_eval(const EvalFrame &ef, const std::set<std::string> &mvars,
 /// @brief Process continuation frame, combining child results
 /// @requires results has enough values for the continuation
 /// @modifies stack, results
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void process_cont(Frame &frame, std::vector<Frame> &stack,
                   std::vector<std::unique_ptr<Expr>> &results) {
-    if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
+    if (auto *anyb = std::get_if<AnyBuildFrame>(&frame)) {
+        build_any(*anyb, results);
+    } else if (auto *ub = std::get_if<UnaryBuild>(&frame)) {
         auto operand = std::move(results.back()); results.pop_back();
         results.push_back(
             std::make_unique<UnaryExpr>(ub->op, std::move(operand)));

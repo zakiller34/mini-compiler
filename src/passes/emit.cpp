@@ -27,6 +27,9 @@ std::string emit_byte_arg(const x86::Arg &a) {
     return emit_arg(a); // fallback for non-reg
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::string emit_instr(const x86::Instr &i) {
     if (const auto *a = std::get_if<x86::Addq>(&i))
         return "    addq " + emit_arg(a->src) + ", " + emit_arg(a->dst);
@@ -64,6 +67,12 @@ std::string emit_instr(const x86::Instr &i) {
         return "    callq *" + emit_arg(ic->func);
     if (const auto *tj = std::get_if<x86::TailJmp>(&i))
         return "    jmp *" + emit_arg(tj->func);
+    if (const auto *oq = std::get_if<x86::Orq>(&i))
+        return "    orq " + emit_arg(oq->src) + ", " + emit_arg(oq->dst);
+    if (const auto *slq = std::get_if<x86::Salq>(&i))
+        return "    salq " + emit_arg(slq->src) + ", " + emit_arg(slq->dst);
+    if (const auto *im = std::get_if<x86::Imulq>(&i))
+        return "    imulq " + emit_arg(im->src) + ", " + emit_arg(im->dst);
     return "    jmp " + std::get<x86::Jmp>(i).label;
 }
 
@@ -80,6 +89,9 @@ std::string emit_block(const std::string &label, const x86::Block &blk) {
 /// @brief Emit full assembly
 /// @requires prog has "main" and "conclusion" blocks
 /// @ensures result is complete x86-64 AT&T assembly
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 std::string emit(const x86::X86Program &prog) {
     std::string result = "    .globl main\n";
 

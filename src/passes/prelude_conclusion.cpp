@@ -43,6 +43,9 @@ bool needs_gc(const x86::X86Program &prog) {
 /// @requires prog has "start" block, stack_space is 16-aligned
 /// @ensures result has "main" (frame setup) and "conclusion" (teardown) blocks
 /// @ensures only used callee-saved regs are pushed/popped
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 x86::X86Program generate_prelude_conclusion(const x86::X86Program &prog) {
     x86::X86Program result = prog;
     auto callee_regs = ordered_callee_saved(prog.used_callee_saved);

@@ -27,6 +27,9 @@ x86::Arg replace_arg(const x86::Arg &a,
     return a;
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 x86::Instr replace_instr(const x86::Instr &instr,
                          const std::map<std::string, x86::Arg> &homes) {
     if (const auto *a = std::get_if<x86::Addq>(&instr))
@@ -59,6 +62,12 @@ x86::Instr replace_instr(const x86::Instr &instr,
         return x86::IndirectCallq{replace_arg(ic->func, homes), ic->arity};
     if (const auto *tj = std::get_if<x86::TailJmp>(&instr))
         return x86::TailJmp{replace_arg(tj->func, homes), tj->arity};
+    if (const auto *oq = std::get_if<x86::Orq>(&instr))
+        return x86::Orq{replace_arg(oq->src, homes), replace_arg(oq->dst, homes)};
+    if (const auto *slq = std::get_if<x86::Salq>(&instr))
+        return x86::Salq{replace_arg(slq->src, homes), replace_arg(slq->dst, homes)};
+    if (const auto *im = std::get_if<x86::Imulq>(&instr))
+        return x86::Imulq{replace_arg(im->src, homes), replace_arg(im->dst, homes)};
     return instr;
 }
 
@@ -68,6 +77,9 @@ void collect_var_from_arg(const x86::Arg &a, std::set<std::string> &vars) {
     }
 }
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 void collect_vars_instr(const x86::Instr &instr, std::set<std::string> &vars) {
     if (const auto *a = std::get_if<x86::Addq>(&instr)) {
         collect_var_from_arg(a->src, vars); collect_var_from_arg(a->dst, vars);
@@ -99,6 +111,13 @@ void collect_vars_instr(const x86::Instr &instr, std::set<std::string> &vars) {
         collect_var_from_arg(ic->func, vars);
     } else if (const auto *tj = std::get_if<x86::TailJmp>(&instr)) {
         collect_var_from_arg(tj->func, vars);
+    } else if (const auto *oq = std::get_if<x86::Orq>(&instr)) {
+        collect_var_from_arg(oq->src, vars); collect_var_from_arg(oq->dst, vars);
+    } else if (const auto *slq = std::get_if<x86::Salq>(&instr)) {
+        collect_var_from_arg(slq->src, vars);
+        collect_var_from_arg(slq->dst, vars);
+    } else if (const auto *im = std::get_if<x86::Imulq>(&instr)) {
+        collect_var_from_arg(im->src, vars); collect_var_from_arg(im->dst, vars);
     }
 }
 
@@ -107,6 +126,9 @@ const std::set<x86::Reg> callee_saved = {x86::Reg::Rbx, x86::Reg::R12,
 
 } // namespace
 
+// Dispatch over a closed node/instruction/frame set: exempt from the
+// 30-line rule (see CLAUDE.md).
+// NOLINTNEXTLINE(readability-function-size)
 x86::X86Program assign_homes(const x86::X86Program &prog) {
     // Multi-block liveness analysis
     auto all_liveness = analyze_liveness_program(prog);
@@ -127,7 +149,8 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
         }
     }
 
-    auto graph = build_interference(all_instrs, all_live_after);
+    auto graph = build_interference(all_instrs, all_live_after,
+                                     &prog.var_types);
     auto coloring = color_graph(graph, num_allocable_regs());
 
     // Collect all vars
@@ -151,10 +174,10 @@ x86::X86Program assign_homes(const x86::X86Program &prog) {
                 homes[*name] = x86::RegArg{reg};
                 if (callee_saved.count(reg) > 0) used_callee.insert(reg);
             } else {
-                // Check if tuple-typed → root stack (R15), else regular stack
+                // Tuple- or Any-typed → root stack (R15), else regular stack
                 auto vt = prog.var_types.find(*name);
                 if (vt != prog.var_types.end() &&
-                    is_vector_type(vt->second)) {
+                    is_root_type(vt->second)) {
                     homes[*name] = x86::Deref{x86::Reg::R15,
                                                kWordSize * root_spill_count};
                     ++root_spill_count;
