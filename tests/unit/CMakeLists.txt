@@ -18,6 +18,9 @@ set(TEST_SOURCES
     test_uncover_get
     test_reveal_functions
     test_limit_functions
+    test_free_vars
+    test_convert_assignments
+    test_closure_conversion
 )
 
 foreach(test_name IN LISTS TEST_SOURCES)

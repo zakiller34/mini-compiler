@@ -1,8 +1,8 @@
 /-!
-# MiniCompiler AST — L_Fun
+# MiniCompiler AST — L_Lambda
 
 Mirror of C++ AST as Lean 4 inductive types.
-Covers Phase 1-6: arithmetic, conditionals, loops, tuples, functions.
+Covers Phase 1-7: arithmetic, conditionals, loops, tuples, functions, closures.
 -/
 
 inductive UnaryOp where
@@ -51,6 +51,10 @@ inductive Expr where
   | vectorLength (vec : Expr) : Expr
   | apply (func : Expr) (args : List Expr) : Expr
   | funRef (name : String) (arity : Nat) : Expr
+  -- Phase 7 (L_Lambda): anonymous functions & closures
+  | lambda (params : List (String × Ty)) (retType : Ty) (body : Expr) : Expr
+  | procArity (expr : Expr) : Expr
+  | closure (arity : Nat) (elems : List Expr) : Expr
   deriving Repr
 
 /-- Top-level function definition. -/

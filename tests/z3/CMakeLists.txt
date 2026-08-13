@@ -7,6 +7,7 @@ set(Z3_TEST_SOURCES
     test_type_checker_z3
     test_uncover_get_z3
     test_calling_convention_z3
+    test_closures_z3
 )
 
 foreach(test_name IN LISTS Z3_TEST_SOURCES)

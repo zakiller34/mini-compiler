@@ -7,6 +7,8 @@
 #include "ir/c_ir.h"
 #include "ir/x86_ir.h"
 #include "passes/assign_homes.h"
+#include "passes/convert_assignments.h"
+#include "passes/convert_to_closures.h"
 #include "passes/emit.h"
 #include "passes/explicate_control.h"
 #include "passes/expose_allocation.h"
@@ -31,6 +33,27 @@ static std::string run_pipeline(std::unique_ptr<Expr> body,
   auto lf = limit_functions(*rf);
   const auto &lf_ref = lf ? *lf : *rf;
   auto ug = uncover_get(lf_ref);
+  auto ea = expose_allocation(*ug);
+  auto r = remove_complex_operands(*ea);
+  auto c = explicate_control(*r);
+  auto s = select_instructions(c);
+  auto a = assign_homes(s);
+  auto p = patch_instructions(a);
+  auto f = generate_prelude_conclusion(p);
+  return emit(f);
+}
+
+/// Full pipeline including the closure passes — mirrors src/main.cpp exactly,
+/// so lambda/closure programs lower all the way to assembly.
+static std::string run_pipeline_full(std::unique_ptr<Expr> body,
+                                     std::vector<DefNode> defs = {}) {
+  Program prog(std::move(defs), std::move(body));
+  auto s0__ = shrink(prog); auto u = uniquify(*s0__);
+  auto rf = reveal_functions(*u);
+  auto ca = convert_assignments(*rf);
+  auto cc = convert_to_closures(*ca);
+  auto lf = limit_functions(*cc);
+  auto ug = uncover_get(*lf);
   auto ea = expose_allocation(*ug);
   auto r = remove_complex_operands(*ea);
   auto c = explicate_control(*r);
@@ -470,4 +493,59 @@ TEST(Pipeline, TailCall) {
     EXPECT_FALSE(asm_str.empty());
     // Tail call should use jmp * not callq *
     EXPECT_NE(asm_str.find("jmp *"), std::string::npos);
+}
+
+// ---- Phase 7: closures lower to assembly ----
+
+// let x = 5; let f = lambda(y:Int):Int { y + x }; f(3)
+// The lifted lambda is loaded via leaq; the call goes through the closure
+// code pointer as an indirect call (callq *).
+TEST(Pipeline, LambdaClosureLowers) {
+  auto lam_body = std::make_unique<BinaryExpr>(
+      BinaryOp::Add, std::make_unique<VarExpr>("y"),
+      std::make_unique<VarExpr>("x"));
+  std::vector<std::pair<std::string, TypePtr>> params;
+  params.emplace_back("y", int_type());
+  auto lam = std::make_unique<LambdaExpr>(std::move(params), int_type(),
+                                          std::move(lam_body));
+  std::vector<std::unique_ptr<Expr>> args;
+  args.push_back(std::make_unique<IntExpr>(3));
+  auto call = std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("f"),
+                                          std::move(args));
+  auto body = std::make_unique<LetExpr>(
+      "x", std::make_unique<IntExpr>(5),
+      std::make_unique<LetExpr>("f", std::move(lam), std::move(call)));
+
+  auto asm_str = run_pipeline_full(std::move(body));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("leaq"), std::string::npos);   // lifted fn address
+  EXPECT_NE(asm_str.find("callq *"), std::string::npos); // indirect call
+}
+
+// A mutable variable captured by a lambda is boxed and still lowers cleanly:
+// let x = 1; let f = lambda(y:Int):Int { begin { set! x (x+y); x } }; f(10)
+TEST(Pipeline, MutableCaptureLowers) {
+  auto set_x = std::make_unique<SetBangExpr>(
+      "x", std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                        std::make_unique<VarExpr>("x"),
+                                        std::make_unique<VarExpr>("y")));
+  std::vector<std::unique_ptr<Expr>> seq;
+  seq.push_back(std::move(set_x));
+  seq.push_back(std::make_unique<VarExpr>("x"));
+  std::vector<std::pair<std::string, TypePtr>> params;
+  params.emplace_back("y", int_type());
+  auto lam = std::make_unique<LambdaExpr>(
+      std::move(params), int_type(),
+      std::make_unique<BeginExpr>(std::move(seq)));
+  std::vector<std::unique_ptr<Expr>> args;
+  args.push_back(std::make_unique<IntExpr>(10));
+  auto call = std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("f"),
+                                          std::move(args));
+  auto body = std::make_unique<LetExpr>(
+      "x", std::make_unique<IntExpr>(1),
+      std::make_unique<LetExpr>("f", std::move(lam), std::move(call)));
+
+  auto asm_str = run_pipeline_full(std::move(body));
+  EXPECT_FALSE(asm_str.empty());
+  EXPECT_NE(asm_str.find("callq *"), std::string::npos);
 }

@@ -98,6 +98,17 @@ def type_check_env : TypeEnv → Expr → Option Ty
       if atypes == ptypes then some ret else none
     | _ => none
   | _, .funRef _ _ => none -- funRef needs env context, stub
+  | env, .lambda ps rt b => do
+    -- body checked in env extended with params; result is a function type
+    let benv := ps.map (fun p => (p.1, p.2)) ++ env
+    let bt ← type_check_env benv b
+    if bt == rt then some (.fun (ps.map (·.2)) rt) else none
+  | env, .procArity e => do
+    let t ← type_check_env env e
+    match t with
+    | .fun _ _ => some .int
+    | _ => none
+  | _, .closure _ _ => none -- introduced post-typecheck, stub
 
 /-- Top-level type check. -/
 def type_check (e : Expr) : Option Ty := type_check_env [] e

@@ -46,6 +46,9 @@ def replace_vars (mvars : List String) : Expr → Expr
   | .vectorLength v => .vectorLength (replace_vars mvars v)
   | .apply f args => .apply (replace_vars mvars f) (args.map (replace_vars mvars))
   | .funRef n a => .funRef n a
+  | .lambda ps rt b => .lambda ps rt (replace_vars mvars b)
+  | .procArity e => .procArity (replace_vars mvars e)
+  | .closure a es => .closure a (es.map (replace_vars mvars))
 
 /-- Top-level uncover_get. -/
 def uncover_get (p : Program) : Program :=

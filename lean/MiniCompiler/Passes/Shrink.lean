@@ -34,6 +34,9 @@ def shrink : Expr → Expr
   | .vectorLength v => .vectorLength (shrink v)
   | .apply f args => .apply (shrink f) (args.map shrink)
   | .funRef n a => .funRef n a
+  | .lambda ps rt b => .lambda ps rt (shrink b)
+  | .procArity e => .procArity (shrink e)
+  | .closure a es => .closure a (es.map shrink)
 
 /-- Shrink preserves evaluation semantics. -/
 theorem shrink_preserves_semantics : ∀ e : Expr,

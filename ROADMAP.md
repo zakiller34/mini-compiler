@@ -317,43 +317,49 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 ---
 
-## Phase 7: Lexically Scoped Functions / Closures (Book Ch. 8, pp. 143-158)
+## Phase 7: Lexically Scoped Functions / Closures (Book Ch. 8, pp. 143-158) ✅
 
 **Language: L_Lambda** — adds `lambda` (anonymous functions) with lexical scoping.
 
-### 7A — Frontend
+### 7A — Frontend ✅
 
-- [ ] New tokens: `LAMBDA`, `PROCEDURE_ARITY`
-- [ ] Grammar: `lambda (params) -> type { body }`, `procedure_arity(e)`
-- [ ] AST nodes: `LambdaExpr`, `ProcArityExpr`
-- [ ] Type checker: lambda body checked in env extended with params + enclosing scope
-- [ ] Interpreter: closures capture environment
+- [x] New tokens: `Lambda`, `ProcArity`
+- [x] Grammar: `lambda (params) : type { body }`, `procedure_arity(e)`; function type annotations `(T,...) -> T`
+- [x] AST nodes: `LambdaExpr`, `ProcArityExpr`, `ClosureExpr`, `AllocateClosureExpr`
+- [x] Type checker: lambda body checked in env extended with params + enclosing scope; `procedure_arity` requires a function
+- [x] Interpreter: closures capture environment via shared variable cells (mutation visible across capture; `-i` matches compiled output)
 
-### 7B — Compiler Passes
+### 7B — Compiler Passes ✅
 
-- [ ] **convert_assignments** — identify vars that are both free in a lambda AND assigned; box them (allocate as 1-element tuple); replace reads/writes with `vector-ref`/`vector-set!`
-- [ ] **convert_to_closures** (closure conversion) — lambda -> `Closure(arity, FunRef(name, arity), fv1, fv2, ...)`; create top-level `Def` for each lambda with extra `clos` param; body loads free vars from closure tuple; application -> extract fn ptr from closure[0], call with closure as first arg; `FunRef` -> `Closure(arity, FunRef(f, arity))` (wrap named fns too)
-- [ ] Update **expose_allocation** — `Closure` -> `AllocateClosure` (like `Allocate` but stores arity in tag bits 57-61)
-- [ ] Update **select_instructions** — `AllocateClosure` like `Allocate` but with arity in tag; `procedure-arity` -> extract bits 57-61 from tag
-- [ ] **Challenge: optimize closures** — skip closure wrapping for non-escaping globals; direct calls for known callees
-- [ ] Test: closures capturing variables, returned closures, closures over mutable state
+- [x] **free_vars** — scoped free-variable analysis (`free_vars`, `free_vars_sorted`)
+- [x] **convert_assignments** — box vars that are both free in a lambda AND assigned (1-element tuple); reads/writes become `vector-ref`/`vector-set!`
+- [x] **convert_to_closures** (closure conversion) — lambda -> `Closure(arity, FunRef(name, arity+1), fv...)`; lifted top-level `Def` with extra leading `clos` param; body loads free vars from closure tuple; indirect application through closure[0]; `FunRef` value wrapped in a closure; direct calls kept direct
+- [x] Update **expose_allocation** — `Closure` -> `AllocateClosure` (arity stored in tag)
+- [x] Update **select_instructions** — `AllocateClosure`; `procedure-arity` extracts arity from tag
+- [ ] **Challenge: optimize closures** — skip closure wrapping for non-escaping globals; direct calls for known callees (partial: direct calls to known FunRefs already skip closure alloc; global escape analysis deferred)
+- [x] Test: closures capturing variables, returned closures, closures over mutable state
 
-### 7 — Tests (TDD)
+### 7 — Tests (TDD) ✅
 
-- [ ] `test_convert_assignments.cpp` — assigned+free vars boxed correctly
-- [ ] `test_closure_conversion.cpp` — lambdas lifted to top-level defs, free vars captured
-- [ ] `test_free_vars.cpp` — free variable analysis complete and correct
-- [ ] Integration: closure programs in `tests/programs/phase7/`
+- [x] `test_convert_assignments.cpp` — assigned+captured vars boxed; set!-only / captured-only not boxed
+- [x] `test_closure_conversion.cpp` — lambdas lifted to top-level defs, free vars captured, defs gain clos param, FunRef wrapped
+- [x] `test_free_vars.cpp` — free variable analysis complete and correct
+- [x] `test_limit_functions.cpp` — updated to new return convention; >6-arg packing
+- [x] `test_interpreter.cpp` / `test_type_checker.cpp` — lambda apply, mutable capture, procedure_arity, rejections
+- [x] Integration: closure programs in `tests/programs/phase7/` (simple_lambda, returned_closure, counter, higher_order, proc_arity) — interp == compiled
+- [x] Pipeline: `LambdaClosureLowers`, `MutableCaptureLowers`
 
-### 7 — Z3 Predicate Tests
+### 7 — Z3 Predicate Tests ✅
 
-- [ ] `free_vars_subset_captured(lambda)` — ForAll fv in free_vars(body), fv in closure tuple
-- [ ] `closure_tuple_has_all_fvs(closure)` — closure contains exactly the needed free vars
+- [x] `free_vars_subset_captured` — ForAll fv in free_vars(body), fv in closure tuple
+- [x] `closure_tuple_has_all_fvs` — closure contains exactly the needed free vars
 
-### 7 — Lean Proofs
+### 7 — Lean Stubs ✅
 
-- [ ] `free_vars_complete` — free variable analysis finds all free vars
-- [ ] `closure_conversion_preserves_semantics` — closure-converted program evaluates same as original
+- [x] `AST.lean` — `Expr.lambda`/`.procArity`/`.closure`; existing passes patched
+- [x] `Passes/FreeVars.lean` — `freeVars` + `free_vars_complete` (stub)
+- [x] `Passes/ConvertAssignments.lean` — box set (`assigned ∩ captured`) + `convert_assignments_preserves_semantics` (stub)
+- [x] `Passes/ConvertToClosures.lean` — `lambdaCaptures`/`buildClosure` + `closure_conversion_preserves_semantics`, `free_vars_subset_captured` (stubs)
 
 ---
 

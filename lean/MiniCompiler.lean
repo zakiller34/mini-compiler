@@ -2,6 +2,9 @@ import MiniCompiler.AST
 import MiniCompiler.Passes.Shrink
 import MiniCompiler.Passes.Uniquify
 import MiniCompiler.Passes.UncoverGet
+import MiniCompiler.Passes.FreeVars
+import MiniCompiler.Passes.ConvertAssignments
+import MiniCompiler.Passes.ConvertToClosures
 import MiniCompiler.Passes.RCO
 import MiniCompiler.Passes.ExplicateControl
 import MiniCompiler.Passes.SelectInstructions

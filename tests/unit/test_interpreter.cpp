@@ -278,3 +278,73 @@ TEST(Interpreter, MutualRecursion) {
     Value result = interpret(prog, in);
     EXPECT_EQ(std::get<int64_t>(result), 1);
 }
+
+// ---- Phase 7: lambdas & closures ----
+
+// let x = 5; let f = lambda(y:Int):Int { y + x }; f(3)   =>  8
+TEST(Interpreter, LambdaCapturesValue) {
+    auto lam_body = std::make_unique<BinaryExpr>(
+        BinaryOp::Add, std::make_unique<VarExpr>("y"),
+        std::make_unique<VarExpr>("x"));
+    std::vector<std::pair<std::string, TypePtr>> params;
+    params.emplace_back("y", int_type());
+    auto lam = std::make_unique<LambdaExpr>(std::move(params), int_type(),
+                                            std::move(lam_body));
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(3));
+    auto call = std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("f"),
+                                            std::move(args));
+    auto body = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(5),
+        std::make_unique<LetExpr>("f", std::move(lam), std::move(call)));
+    EXPECT_EQ(run(std::move(body)), 8);
+}
+
+// let x = 1;
+// let f = lambda(y:Int):Int { begin { set! x (x + y); x } };
+// begin { f(10); f(100) }                                   =>  111
+// A copying closure would return 1; only shared mutable capture gives 111.
+TEST(Interpreter, ClosureSharesMutableCapture) {
+    auto set_x = std::make_unique<SetBangExpr>(
+        "x", std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                          std::make_unique<VarExpr>("x"),
+                                          std::make_unique<VarExpr>("y")));
+    std::vector<std::unique_ptr<Expr>> lam_seq;
+    lam_seq.push_back(std::move(set_x));
+    lam_seq.push_back(std::make_unique<VarExpr>("x"));
+    auto lam_body = std::make_unique<BeginExpr>(std::move(lam_seq));
+    std::vector<std::pair<std::string, TypePtr>> params;
+    params.emplace_back("y", int_type());
+    auto lam = std::make_unique<LambdaExpr>(std::move(params), int_type(),
+                                            std::move(lam_body));
+
+    auto call = [](int64_t n) {
+        std::vector<std::unique_ptr<Expr>> a;
+        a.push_back(std::make_unique<IntExpr>(n));
+        return std::make_unique<ApplyExpr>(std::make_unique<VarExpr>("f"),
+                                           std::move(a));
+    };
+    std::vector<std::unique_ptr<Expr>> outer_seq;
+    outer_seq.push_back(call(10));
+    outer_seq.push_back(call(100));
+    auto body = std::make_unique<LetExpr>(
+        "x", std::make_unique<IntExpr>(1),
+        std::make_unique<LetExpr>(
+            "f", std::move(lam),
+            std::make_unique<BeginExpr>(std::move(outer_seq))));
+    EXPECT_EQ(run(std::move(body)), 111);
+}
+
+// procedure_arity(lambda(a:Int,b:Int):Int { a + b })  =>  2
+TEST(Interpreter, ProcedureArity) {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    params.emplace_back("a", int_type());
+    params.emplace_back("b", int_type());
+    auto lam = std::make_unique<LambdaExpr>(
+        std::move(params), int_type(),
+        std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                     std::make_unique<VarExpr>("a"),
+                                     std::make_unique<VarExpr>("b")));
+    auto body = std::make_unique<ProcArityExpr>(std::move(lam));
+    EXPECT_EQ(run(std::move(body)), 2);
+}

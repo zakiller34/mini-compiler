@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <istream>
 #include <map>
+#include <memory>
 #include <string>
 #include <variant>
 #include <vector>
@@ -11,8 +12,10 @@ namespace mc {
 
 namespace {
 
-/// Flat mutable environment — correct post-uniquify since all names unique.
-using Env = std::map<std::string, Value>;
+/// Flat environment of shared variable cells — correct post-uniquify since all
+/// names are unique. Cells (shared_ptr<Value>) let closures share mutable state
+/// with the scope that defined the captured variable.
+using Env = std::map<std::string, std::shared_ptr<Value>>;
 
 struct EvalFrame { const Expr *expr; };
 struct LetBindFrame { std::string var; const Expr *body; };
@@ -38,7 +41,7 @@ struct ApplyArgsFrame {
 };
 struct ProcArityFrame {};
 /// Restores the caller's environment after a closure body finishes.
-struct RestoreEnvFrame { std::map<std::string, Value> saved; };
+struct RestoreEnvFrame { std::map<std::string, std::shared_ptr<Value>> saved; };
 
 using Frame = std::variant<EvalFrame, LetBindFrame, UnaryFrame,
                            BinLhsFrame, BinRhsFrame, IfCondFrame,
@@ -84,7 +87,7 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
         values.push_back(expr_cast<BoolExpr>(e)->value);
         break;
     case NodeKind::Var:
-        values.push_back(env.at(expr_cast<VarExpr>(e)->name));
+        values.push_back(*env.at(expr_cast<VarExpr>(e)->name));
         break;
     case NodeKind::Read: {
         int64_t val = 0;
@@ -154,7 +157,7 @@ void push_eval(const Expr *e, Env &env, std::vector<Frame> &stack,
         values.push_back(std::monostate{});
         break;
     case NodeKind::Get:
-        values.push_back(env.at(expr_cast<GetExpr>(e)->name));
+        values.push_back(*env.at(expr_cast<GetExpr>(e)->name));
         break;
     case NodeKind::Vector: {
         auto *ve = expr_cast<VectorExpr>(e);
@@ -234,7 +237,7 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
                   std::vector<Value> &values) {
     if (auto *lf = std::get_if<LetBindFrame>(&frame)) {
         Value val = values.back(); values.pop_back();
-        env[lf->var] = val;
+        env[lf->var] = std::make_shared<Value>(val); // fresh cell per binding
         stack.push_back(EvalFrame{lf->body});
     } else if (auto *uf = std::get_if<UnaryFrame>(&frame)) {
         Value v = values.back(); values.pop_back();
@@ -302,7 +305,9 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
         stack.push_back(EvalFrame{wb->cond});
     } else if (auto *sb = std::get_if<SetBangFrame>(&frame)) {
         Value val = values.back(); values.pop_back();
-        env[sb->var] = val;
+        auto it = env.find(sb->var);
+        if (it != env.end()) *it->second = val; // mutate shared cell in place
+        else env[sb->var] = std::make_shared<Value>(val);
         values.push_back(std::monostate{}); // set! returns void
     } else if (auto *bf = std::get_if<BeginFrame>(&frame)) {
         if (bf->remaining.empty()) {
@@ -375,10 +380,10 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
             // then restore the caller's env.
             const ClosureData &cd = **cl;
             stack.push_back(RestoreEnvFrame{env});
-            Env new_env = cd.captured;
-            // invariant: params[0..i) bound in new_env
+            Env new_env = cd.captured; // shares captured cells with definer
+            // invariant: params[0..i) bound as fresh cells in new_env
             for (size_t i = 0; i < cd.params.size(); ++i) {
-                new_env[cd.params[i]] = args[i];
+                new_env[cd.params[i]] = std::make_shared<Value>(args[i]);
             }
             env = std::move(new_env);
             stack.push_back(EvalFrame{cd.body});
@@ -388,9 +393,9 @@ void process_cont(Frame &frame, Env &env, std::vector<Frame> &stack,
                 throw std::runtime_error("apply: unknown function " + f->name);
             }
             // Top-level functions: bind params in flat env (names unique).
-            // invariant: params[0..i) bound
+            // invariant: params[0..i) bound as fresh cells
             for (size_t i = 0; i < def->params.size(); ++i) {
-                env[def->params[i].first] = args[i];
+                env[def->params[i].first] = std::make_shared<Value>(args[i]);
             }
             stack.push_back(EvalFrame{def->body.get()});
         } else {
@@ -423,8 +428,8 @@ Value interpret(const Program &prog, std::istream &in) {
     // Bind function names in env
     // invariant: env has function values for defs[0..i)
     for (const auto &def : prog.defs) {
-        env[def.name] = FunctionValue{def.name,
-                                       static_cast<int64_t>(def.params.size())};
+        env[def.name] = std::make_shared<Value>(FunctionValue{
+            def.name, static_cast<int64_t>(def.params.size())});
     }
     stack.push_back(EvalFrame{prog.body.get()});
 

@@ -451,3 +451,61 @@ TEST(TypeChecker, MutualRecursionTypechecks) {
     auto t = type_check(prog);
     EXPECT_EQ(t->kind, TypeKind::Bool);
 }
+
+// ---- Phase 7: lambdas & procedure_arity ----
+
+namespace {
+/// lambda(y:Int):<ret> { <body> }
+std::unique_ptr<Expr> lam(TypePtr ret, std::unique_ptr<Expr> body) {
+    std::vector<std::pair<std::string, TypePtr>> params;
+    params.emplace_back("y", int_type());
+    return std::make_unique<LambdaExpr>(std::move(params), std::move(ret),
+                                        std::move(body));
+}
+} // namespace
+
+TEST(TypeChecker, LambdaHasFunctionType) {
+    auto e = lam(int_type(), std::make_unique<VarExpr>("y"));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Function);
+}
+
+TEST(TypeChecker, LambdaBodyTypedInParamEnv) {
+    // body uses param y (Int) + literal; well-typed
+    auto e = lam(int_type(),
+                 std::make_unique<BinaryExpr>(BinaryOp::Add,
+                                              std::make_unique<VarExpr>("y"),
+                                              std::make_unique<IntExpr>(1)));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Function);
+}
+
+TEST(TypeChecker, LambdaBodyRetMismatchRejected) {
+    // declares :Bool but body is Int -> reject
+    auto e = lam(bool_type(), std::make_unique<VarExpr>("y"));
+    EXPECT_THROW(check_full(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, ApplyLambdaChecksReturn) {
+    auto f = lam(int_type(), std::make_unique<VarExpr>("y"));
+    std::vector<std::unique_ptr<Expr>> args;
+    args.push_back(std::make_unique<IntExpr>(3));
+    auto e = std::make_unique<ApplyExpr>(std::move(f), std::move(args));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Int);
+}
+
+TEST(TypeChecker, ApplyArityMismatchRejected) {
+    auto f = lam(int_type(), std::make_unique<VarExpr>("y"));
+    std::vector<std::unique_ptr<Expr>> args; // zero args, expects one
+    auto e = std::make_unique<ApplyExpr>(std::move(f), std::move(args));
+    EXPECT_THROW(check_full(std::move(e)), TypeError);
+}
+
+TEST(TypeChecker, ProcArityOnFunctionIsInt) {
+    auto e = std::make_unique<ProcArityExpr>(
+        lam(int_type(), std::make_unique<VarExpr>("y")));
+    EXPECT_EQ(check(std::move(e)), TypeKind::Int);
+}
+
+TEST(TypeChecker, ProcArityOnNonFunctionRejected) {
+    auto e = std::make_unique<ProcArityExpr>(std::make_unique<IntExpr>(5));
+    EXPECT_THROW(check_full(std::move(e)), TypeError);
+}

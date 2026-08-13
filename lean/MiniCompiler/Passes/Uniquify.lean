@@ -76,6 +76,17 @@ def uniquify_expr (env : RenameEnv) (counter : Nat) : Expr → Expr × Nat
       (acc.1 ++ [a'], c')) ([], c1)
     (.apply f' args', c2)
   | .funRef n a => (.funRef n a, counter)
+  | .lambda ps rt b =>
+    let (b', c) := uniquify_expr env counter b
+    (.lambda ps rt b', c)
+  | .procArity e =>
+    let (e', c) := uniquify_expr env counter e
+    (.procArity e', c)
+  | .closure a es =>
+    let (es', c) := es.foldl (fun (acc : List Expr × Nat) e =>
+      let (e', c') := uniquify_expr env acc.2 e
+      (acc.1 ++ [e'], c')) ([], counter)
+    (.closure a es', c)
 
 /-- Top-level uniquify. -/
 def uniquify (p : Program) : Program :=

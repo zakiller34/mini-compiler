@@ -40,6 +40,9 @@ def reveal_expr (fmap : FunMap) : Expr → Expr
   | .vectorSet v i e => .vectorSet (reveal_expr fmap v) i (reveal_expr fmap e)
   | .vectorLength v => .vectorLength (reveal_expr fmap v)
   | .apply f args => .apply (reveal_expr fmap f) (args.map (reveal_expr fmap))
+  | .lambda ps rt b => .lambda ps rt (reveal_expr fmap b)
+  | .procArity e => .procArity (reveal_expr fmap e)
+  | .closure a es => .closure a (es.map (reveal_expr fmap))
 
 /-- Build FunMap from defs. -/
 def build_fun_map (defs : List DefNode) : FunMap :=
