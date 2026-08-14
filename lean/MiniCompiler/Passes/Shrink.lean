@@ -106,6 +106,32 @@ theorem shrink_no_and_or (e : Expr) : noAndOr (shrink e) = true := by
   | cons e es ih ihs => simp [noAndOrL, ih, ihs]
   | _ => simp_all [shrink, noAndOr]
 
+/-- Falsifiability receipt, part 1: `noAndOr` can actually fail.
+
+A theorem of the form `p (f x) = true` is worthless if `p` is constantly `true`,
+and nothing in `shrink_no_and_or` rules that out. This witness does: an `or`
+underneath an `inject`. It is the exact shape the pre-fix model missed, because
+`shrink` ended in a catch-all `| e => e` that treated the L_Any nodes as leaves
+even though they carry sub-expressions. -/
+theorem noAndOr_is_falsifiable :
+    noAndOr (.inject (.binary .or_ (.bool true) (.bool false)) .bool) = false := by
+  decide
+
+/-- Falsifiability receipt, part 2: `shrink` clears that witness.
+
+Before the congruence case at `shrink`'s `.inject` was added, this evaluated to
+`false` and `shrink_no_and_or` was unprovable — correctly, because it was false
+of the model. -/
+theorem shrink_clears_and_or_under_inject :
+    noAndOr (shrink (.inject (.binary .or_ (.bool true) (.bool false)) .bool))
+      = true := by
+  simp [shrink, noAndOr]
+
+-- Prints `[propext, Quot.sound]`. The stronger guarantee is mechanical:
+-- `Hygiene.lean` fails `lake build` on any declaration depending on `sorryAx`
+-- outside the checked-in allowlist, or on `Lean.ofReduceBool` (native_decide).
+#print axioms shrink_no_and_or
+
 /-- Bool encoding roundtrip: and/or desugaring is equivalent. -/
 theorem bool_encoding_roundtrip : ∀ (a b : Bool),
     (a && b) = (if a then b else false) := by

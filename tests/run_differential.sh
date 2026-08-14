@@ -3,9 +3,11 @@
 # Differential test: for every .mc program, the interpreter and the compiled
 # binary must agree.
 #
-# The two paths share only the parser and type checker; everything after that is
-# independent. So agreement across the whole corpus is a strong signal, and
-# disagreement localises the fault to one of the twenty-one passes.
+# For statically-typed programs the two paths share only the lexer, parser and
+# type checker; everything after that is independent, so disagreement localises
+# the fault to one of the twenty compiler passes. Under --dyn (the phase8 corpus)
+# they additionally share shrink, uniquify, reveal_functions and cast_insert, so
+# a fault inside those four cannot be localised this way — see main.cpp.
 #
 # This is how `tests/programs/phase6/two_args.mc` was found to miscompile —
 # `add(20, 22)` returned 40 for the entire life of Phase 6, through two

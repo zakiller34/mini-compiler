@@ -96,12 +96,25 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] `valid_coloring(graph, colors)` — ForAll (u,v) in edges, `color(u) != color(v)`
 - [x] `liveness_covers_uses(live_sets, instrs)` — ForAll v k, `used_later(v,k) => v in live_after(k)`
 
-### 2 — Lean Proofs ✅
+### 2 — Lean Proofs — weaker than this list once claimed
 
-- [x] `liveness_sound` — every used variable is in the live-after set of its definition point
-- [x] `interference_correct` — edge iff two vars simultaneously live
-- [x] `coloring_valid` — no two adjacent nodes share a color
-- [x] `dsatur_terminates` — DSATUR loop terminates (uncolored count decreases)
+Corrected during the proof-hygiene audit. All four typecheck, but none is about
+the algorithms this phase implements; see "What is and is not proved" in the
+README, which states the narrowed version.
+
+- [x] `live_before_contains_reads` / `live_before_preserves` — about the
+      *single-instruction* transfer function. Nothing is proved about the
+      worklist fixpoint, which is the actual analysis.
+- [~] `liveness_sound` — a verbatim alias of `live_before_contains_reads`
+      (`:= live_before_contains_reads rw la v hread`). Grander name, no content.
+- [~] `interference_correct` — unfolds a three-conjunct `def`. There is no
+      interference-graph *construction* in Lean; `IGraph` axiomatises symmetry
+      and irreflexivity as structure fields.
+- [~] `coloring_valid` — applies a hypothesis to its own arguments. It states a
+      *specification* of a valid colouring, not a property of the allocator.
+- [~] `dsatur_terminates` — `omega` on `n - (colored+1) < n - colored`. **No
+      DSATUR algorithm exists in the file**; this is Nat arithmetic wearing an
+      algorithm's name.
 
 ---
 
@@ -128,7 +141,7 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] Update interference graph for `movzbq`, `Cmpq`, `SetCC`, `Xorq`, `JmpIf`
 - [x] Update `patch_instructions` for `cmpq` imm-dst fix
 - [x] Update `emit` for new instructions + multi-block emission order
-- [ ] **Challenge: optimize blocks** — declined (see Cross-Cutting)
+- [ ] **Challenge: optimize blocks** — declined (see Phase 4 — Deferred)
 - [x] End-to-end: 6 phase3 .mc programs compile correctly; 12 phase1 programs still pass
 
 ### 3 — Tests ✅
@@ -271,7 +284,7 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] **Bug found by those tests**: the GC check was emitted in the *body* of
       the `let` binding the allocation, so `allocate` bumped `free_ptr` before
       anything checked there was room. Fixed; see
-      `.changeset/012_proof_hygiene.md` and the Phase 5 notes in README.md.
+      `.changeset/005_tuples_gc.md` and "Where it didn't pay" in README.md.
 - [x] `AST.lean` has `Ty.vector`
 
 ### 5 — Not done
@@ -330,7 +343,12 @@ Replace naive stack allocation with graph-coloring register allocator.
 - [x] Higher-order functions — covered by `tests/programs/phase7/higher_order.mc`
 - [x] `.align 8` on function labels, and on `main` (added later; `main` was the
       one entry point emitted without it)
-- [x] `Passes/RevealFunctions.lean`, `Passes/LimitFunctions.lean`
+- [x] `Passes/RevealFunctions.lean` — `reveal_functions_no_var_for_fns` proved.
+      Caveat found later: this module **had not compiled since Phase 8 landed**,
+      because the lakefile had no `globs` and nothing imported it. Fixed.
+- [~] `Passes/LimitFunctions.lean` — model is `fun p => p`, an identity stub
+      against 371 lines of C++. `limit_functions_max_arity` was **deleted**
+      rather than `sorry`'d, because it is false of the stub.
 - [x] Changeset `.changeset/009_functions.md`
 - [x] `read() + 10` — fixed in RCO (`rco.cpp:96,120-125` let-bind `Read` rather
       than taking the `clone_leaf` shortcut), so `make_atom` never sees it.
@@ -391,8 +409,14 @@ Replace naive stack allocation with graph-coloring register allocator.
 
 - [x] `AST.lean` — `Expr.lambda`/`.procArity`/`.closure`; existing passes patched
 - [x] `Passes/FreeVars.lean` — `freeVars` + `free_vars_complete` (stub)
-- [x] `Passes/ConvertAssignments.lean` — box set (`assigned ∩ captured`) + `convert_assignments_preserves_semantics` (stub)
-- [x] `Passes/ConvertToClosures.lean` — `lambdaCaptures`/`buildClosure` + `closure_conversion_preserves_semantics`, `free_vars_subset_captured` (stubs)
+- [x] `Passes/ConvertAssignments.lean` — box set (`assigned ∩ captured`), proved
+      as `toBox_correct`. `convert_assignments_preserves_semantics` **removed**:
+      it stood as `∀ _p : Program, True := by trivial` and the boxing rewrite
+      itself is not modelled in Lean.
+- [x] `Passes/ConvertToClosures.lean` — `lambdaCaptures`/`buildClosure` +
+      `free_vars_subset_captured`, `closure_tuple_has_all_fvs` (both proved).
+      `closure_conversion_preserves_semantics` **removed**: same vacuous shape,
+      and only the two helpers above are modelled, not the pass.
 
 ---
 
@@ -467,11 +491,19 @@ statically typed **L_Any** intermediate language. Selected with `mc --dyn`.
 
 - [x] `AST.lean` — `Ty.any`, `TypePred`, the ten L_Any `Expr` constructors
 - [x] `Passes/Tagging.lean` — `tagof`/`isFlat` + `tags_are_nonzero` (proven),
-      `scalar_tag_roundtrip` (proven), `tagof_injective_on_flat`
-- [x] `Passes/CastInsert.lean` — `castInsert` + `cast_insert_types_any`,
-      `cast_insert_uses_flat_types` (sorry)
+      `scalar_tag_roundtrip` (proven, over `Nat`; the 64-bit bit-vector version
+      lives in `tests/z3/test_tagging_z3.cpp`).
+      `tagof_injective_on_flat` **replaced** by `tagof_distinguishes_shapes`:
+      it concluded `… ∨ True`, and `tagof` is not in fact injective on flat types.
+- [x] `Passes/CastInsert.lean` — `castInsert` + `cast_insert_uses_flat_types`
+      and `cast_insert_uses_flat_vec_types` (both proved, as two point facts).
+      `cast_insert_types_any` **deleted**: the model covers only the
+      representative forms of fig 9.10, so the invariant is *false* of it, and a
+      false statement behind a `sorry` is worse than a vacuous one.
 - [x] `Passes/RevealCasts.lean` — `revealCasts` + `reveal_casts_no_casts`,
-      `project_inject_roundtrip`, `project_mismatch_exits`
+      `lowerProject_else_is_exit` (the syntactic half of `project_mismatch_exits`).
+      `project_inject_roundtrip` **removed**: it concluded `tagof t = tagof t`,
+      reflexivity wearing the name of a round-trip property.
 - [x] `TypeChecker.lean` — fig 9.6 rules added
 
 ### 8 — Known Limitations
